@@ -13,6 +13,7 @@ from __future__ import annotations
 import threading
 import time
 
+import inputs
 from common import find_game_window, game_is_focused
 from config import KEYS, STOP_KEY
 
@@ -54,29 +55,24 @@ def wait(seconds: float) -> None:
 
 
 def hold(key: str, seconds: float) -> None:
-    import pydirectinput
-
-    pydirectinput.keyDown(key)
+    check()
+    inputs.key_down(key)
     try:
         wait(seconds)
     finally:
-        pydirectinput.keyUp(key)
+        inputs.key_up(key)
 
 
 def press(key: str) -> None:
-    import pydirectinput
-
     check()
-    pydirectinput.press(key)
+    inputs.press(key)
 
 
 def turn(dx: int, steps: int = 30) -> None:
     """Turn the camera smoothly: games read relative mouse moves."""
-    import pydirectinput
-
     for _ in range(steps):
         check()
-        pydirectinput.moveRel(dx // steps, 0, relative=True)
+        inputs.move(dx // steps, 0)
         time.sleep(0.01)
 
 
@@ -92,11 +88,12 @@ TESTS = [
 
 
 def main() -> None:
-    import pydirectinput
-
-    pydirectinput.FAILSAFE = False  # the mouse is locked in the game; F12 is the stop key
     if find_game_window() is None:
         raise SystemExit("Je ne trouve pas la fenêtre du jeu. Lance Satisfactory et charge une partie.")
+    print("Touches utilisées (lettre affichée par le jeu, puis touche physique) :")
+    for action, key in KEYS.items():
+        scan, _ = inputs.scan_code(key)
+        print(f"  {action:<10} {key.upper():<6} code {scan}")
     watch_stop_key()
     print(f"Clique dans le jeu maintenant. Début dans {COUNTDOWN} s. {STOP_KEY.upper()} pour tout arrêter.")
     for left in range(COUNTDOWN, 0, -1):

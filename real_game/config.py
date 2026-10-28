@@ -10,16 +10,17 @@ CAPTURE_DIR = Path(__file__).resolve().parent.parent / "captures"
 # Address of the Ficsit Remote Monitoring mod's web server (step 2).
 FRM_URL = "http://localhost:8080"
 
-# Keys, as shown in the game's Options > Controls. On an AZERTY keyboard with
-# the French layout, forward is often "z" and left "q": if the character does
-# not move during step 3, try the other letter.
+# Keys, as the game shows them (Options > Commandes). The keyboard layout
+# decides which physical key that is, so write the letters you see in game:
+# "z", "q", "s", "d" on an AZERTY keyboard, "w", "a", "s", "d" on QWERTY.
 KEYS = {
-    "forward": "w",
+    "forward": "z",
     "back": "s",
-    "left": "a",
+    "left": "q",
     "right": "d",
     "jump": "space",
     "inventory": "tab",
+    "interact": "e",
 }
 
 # Key that stops any script driving the game, at any moment.

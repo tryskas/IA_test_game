@@ -71,7 +71,6 @@ Ce que ces bibliothèques font :
 | `opencv` | traitement d'image : découper, comparer, chercher un motif |
 | `easyocr` | lire le texte affiché à l'écran (en français et en anglais) |
 | `pygetwindow` | trouver la fenêtre du jeu |
-| `pydirectinput-rgx` | envoyer des touches et des mouvements de souris que les jeux DirectX acceptent |
 | `pynput` | surveiller la touche d'arrêt d'urgence (F12) |
 
 ### Régler le jeu
@@ -83,7 +82,7 @@ Dans les options du jeu :
 - **taille de l'interface** : laisse la valeur par défaut, et ne la change plus ensuite ;
 - **langue** : français, et garde-la (la lecture du texte en dépend).
 
-Note aussi les touches de déplacement (Options > Commandes). Sur un clavier AZERTY, c'est souvent Z, Q, S, D. Reporte-les dans `real_game/config.py`, section `KEYS`.
+Les touches sont réglées pour un clavier AZERTY (Z, Q, S, D), comme le jeu les affiche. Si tu les as changées dans Options > Commandes, reporte les lettres affichées par le jeu dans `real_game/config.py`, section `KEYS`. Le clavier et la souris sont pilotés par `real_game/inputs.py`, qui envoie la touche physique correspondant à chaque lettre selon ta disposition de clavier.
 
 Enfin, crée une **nouvelle partie** dédiée aux essais, dans la zone de départ la plus simple (Grass Fields).
 
@@ -114,8 +113,9 @@ Lire l'inventaire ou l'électricité à l'image est fragile : un chiffre mal lu,
 
 1. Installe **Satisfactory Mod Manager** depuis [ficsit.app](https://ficsit.app).
 2. Dans le Mod Manager, cherche **Ficsit Remote Monitoring** et installe-le. Ses dépendances s'installent toutes seules.
-3. Lance le jeu depuis le Mod Manager et charge ta partie.
-4. Ouvre le chat du jeu (touche Entrée) et tape :
+3. Vérifie que le Mod Manager indique le mod comme compatible avec ta version du jeu (affichée en haut à gauche de l'écran, par exemple 1.2.4.1).
+4. Lance le jeu depuis le Mod Manager et charge ta partie.
+5. Ouvre le chat du jeu (touche Entrée) et tape :
 
 ```text
 /frm http start
@@ -123,7 +123,7 @@ Lire l'inventaire ou l'électricité à l'image est fragile : un chiffre mal lu,
 
 Pour ne plus avoir à le taper, active le démarrage automatique du serveur web dans les options du mod (menu principal du jeu, Options, section du mod).
 
-5. Dans le terminal :
+6. Dans le terminal :
 
 ```bash
 python real_game/check_game_data.py
@@ -154,7 +154,7 @@ Sécurités : **F12 arrête tout immédiatement**, et le script s'arrête aussi 
 
 En cas de problème :
 
-- Le personnage tourne mais n'avance pas : la touche d'avance ne correspond pas. Change `forward` dans `real_game/config.py` (essaie `z` au lieu de `w`, et pareil pour les autres touches).
+- Le personnage tourne mais n'avance pas : la touche d'avance ne correspond pas à celle du jeu. Vérifie dans Options > Commandes et corrige `forward` dans `real_game/config.py` (pareil pour les autres touches).
 - Rien ne bouge du tout : relance le terminal en tant qu'administrateur.
 
 **Envoie-moi** la liste des mouvements qui ont marché et de ceux qui n'ont pas marché.
@@ -184,6 +184,8 @@ Une fois les quatre étapes validées, l'IA jouera en boucle :
 3. **choisir** une action : c'est la même IA que dans `watch.py` ;
 4. l'**exécuter** avec une suite de gestes enregistrée pour cette action (une « macro ») ;
 5. **vérifier** dans le mod que l'action a marché, puis recommencer.
+
+Le mini-jeu commence une fois le HUB posé. Le début du tutoriel du vrai jeu (équiper le repousse-xénos, démonter la capsule d'atterrissage, construire le HUB) se fera d'abord à la main, puis avec une macro dédiée.
 
 Les macros sont à construire une par une, de la plus simple à la plus difficile :
 
