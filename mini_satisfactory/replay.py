@@ -31,6 +31,7 @@ class Frame:
     machines: tuple[MachineView, ...]
     upgrades_done: int
     unlocked: frozenset[str]
+    structures: frozenset[str]
     power_capacity_mw: float
     power_used_mw: float
     power_demand_mw: float
@@ -111,6 +112,7 @@ def snapshot(sim: Simulation) -> Frame:
         machines=tuple(machine_view(sim, m) for m in sim.machines),
         upgrades_done=sim.upgrades_done,
         unlocked=frozenset(sim.unlocked),
+        structures=frozenset(sim.structures),
         power_capacity_mw=sim.power_capacity(),
         power_used_mw=sim.power_used_mw,
         power_demand_mw=demand,

@@ -135,6 +135,28 @@ Le script interroge le mod sur chaque type de données (joueur, inventaire, éle
 
 Si Windows demande d'autoriser le jeu sur le réseau, accepte pour les réseaux privés.
 
+## Le copilote : l'IA te conseille pendant que tu joues
+
+Dès que l'étape 2 marche, l'IA peut lire ta partie et te dire quoi faire. Tu joues toi-même, elle conseille. Il faut d'abord l'entraîner, une seule fois (environ 15 min) :
+
+```bash
+python train.py
+```
+
+Puis, le jeu lancé avec le mod et une partie chargée :
+
+```bash
+python real_game/copilot.py
+```
+
+Toutes les 2 secondes, le copilote lit ton inventaire et tes HUB upgrades, et affiche le prochain upgrade avec ce qui manque, ainsi que l'action conseillée par l'IA. Pour miner ou poser une foreuse, il indique aussi le gisement libre le plus proche : sa distance et de combien tourner (vers la droite ou la gauche).
+
+Limites de cette première version :
+
+- il ne voit pas encore tes machines, seulement l'atelier d'équipement ;
+- le sens « droite / gauche » vient d'un calcul pas encore vérifié dans le jeu : dis-moi s'il est inversé ;
+- le mini-jeu commence une fois le HUB posé : termine d'abord le début du tutoriel à la main.
+
 ## Étape 3 : les mains (clavier et souris)
 
 Place ton personnage dans un endroit sûr : sur un sol plat, rien en main, loin d'un précipice. Puis :

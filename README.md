@@ -32,7 +32,13 @@ Puis :
 pip install -r requirements.txt
 ```
 
-Regarder l'IA jouer (une IA déjà entraînée est fournie dans `models/ia_tier0.zip`) :
+Entraîner l'IA (environ 15 min, voir plus bas) :
+
+```bash
+python train.py
+```
+
+Puis la regarder jouer :
 
 ```bash
 python watch.py
@@ -45,7 +51,7 @@ python watch.py
 Chaque partie est d'abord calculée (en moins d'une seconde), puis jouée à l'écran à la vitesse choisie. La fenêtre montre :
 
 - **HUB** : les 6 upgrades, ce qui manque pour celui en cours, et le temps de chaque upgrade terminé, comparé à celui du script usine (vert : plus rapide, rouge : plus lent) ;
-- **Usine** : les gisements et les foreuses posées dessus, les fonderies et façonneuses (en marche, en attente, sortie pleine, sans courant), l'électricité et le carburant ;
+- **Usine** : les gisements et les foreuses posées dessus, les fonderies et constructeurs (en marche, en attente, sortie pleine, sans courant), l'électricité et le carburant ;
 - **Pionnier** : l'action en cours, le stock et le journal des dernières actions ;
 - **La course** : où en est chaque joueur au même instant de jeu.
 
@@ -62,7 +68,7 @@ Un clic sur la ligne de temps saute à ce moment. Options utiles : `python watch
 
 ## Les autres commandes
 
-Entraîner l'IA (environ 15 min sur un PC récent). Le meilleur modèle remplace `models/ia_tier0.zip` :
+Entraîner l'IA (environ 15 min sur un PC récent). Le meilleur modèle est enregistré dans `models/ia_tier0.zip` :
 
 ```bash
 python train.py
@@ -99,15 +105,15 @@ python play.py --joueur ia
 | `mini_satisfactory/viewer.py` | La fenêtre pygame |
 | `watch.py`, `train.py`, `play.py` | Les commandes ci-dessus |
 | `real_game/` | Les scripts pour le vrai jeu : capture d'écran, données du mod, clavier et souris, lecture du texte (voir le guide) |
-| `models/ia_tier0.zip` | L'IA entraînée |
+| `models/ia_tier0.zip` | L'IA entraînée, créée par `train.py` |
 | `tests/` | Tests automatiques |
 
 ## Les règles du mini-jeu
 
 - **But** : livrer les 6 HUB upgrades du Tier 0 le plus vite possible (en temps de jeu).
 - **Actions du joueur** (chacune prend du temps de jeu) : miner à la main, fabriquer à l'établi, construire une machine, ramasser des feuilles pour le brûleur du HUB, faire la tournée des machines (les vider et les remplir), attendre, livrer le HUB.
-- **Machines** : foreuses portatives, Foreuse Mk.1, fonderies, façonneuses. Elles travaillent pendant que le joueur fait autre chose. Fonderies et façonneuses consomment de l'électricité, et le brûleur du HUB a besoin de feuilles.
-- **Avant les convoyeurs** (HUB Upgrade 4), il faut remplir et vider les machines à la main. Après, elles sont reliées au stock automatiquement, sauf les foreuses portatives, comme dans le jeu.
+- **Machines** : atelier d'équipement (pour fabriquer les foreuses portables), foreuses portables, Foreuse Mk.1, fonderies, constructeurs. Elles travaillent pendant que le joueur fait autre chose. Fonderies et constructeurs consomment de l'électricité, et le brûleur du HUB a besoin de feuilles.
+- **Avant les convoyeurs** (HUB Upgrade 4), il faut remplir et vider les machines à la main. Après, elles sont reliées au stock automatiquement, sauf les foreuses portables, comme dans le jeu.
 
 Simplifications : pas de carte ni de trajets, un seul stock commun, et quand l'électricité manque, les machines ralentissent au lieu de faire sauter le fusible.
 
@@ -128,8 +134,9 @@ Sans l'étape 1, l'IA apprend par pur essais-erreurs. Elle finit par faire tout 
 
 Tout est regroupé dans `mini_satisfactory/data.py`.
 
-- **Repris du jeu (version 1.0)** : coûts et déblocages des HUB upgrades, recettes, coûts des machines, cadence et consommation de la Foreuse Mk.1, consommation des fonderies et façonneuses.
-- **Estimations** (marquées `APPROX` dans le fichier) : vitesse de minage et de fabrication à la main, cadence de la foreuse portative, quantité de feuilles ramassées, puissance du brûleur du HUB, gisements autour du départ.
+- **Lu dans le jeu** (version 1.2.4.1, avec le mod Ficsit Remote Monitoring) : coûts et déblocages des HUB upgrades, recettes avec leur durée à la main et en machine, coûts des machines et de l'atelier d'équipement. Un test vérifie que les coûts des upgrades restent identiques à ceux du jeu.
+- **Repris de la documentation du jeu** : cadence et consommation de la Foreuse Mk.1, consommation des fonderies et constructeurs.
+- **Estimations** (marquées `APPROX` dans le fichier) : vitesse de minage à la main, cadence de la foreuse portable, quantité de feuilles ramassées, puissance du brûleur du HUB, gisements autour du départ.
 
 Si tu connais les vraies valeurs, corrige-les dans `data.py`, puis réentraîne l'IA : le reste s'adapte.
 
@@ -137,13 +144,14 @@ Si tu connais les vraies valeurs, corrige-les dans `data.py`, puis réentraîne 
 
 | Joueur | Résultat |
 |---|---|
-| **IA** (imitation, puis 500 000 actions d'entraînement seule) | **Tier 0 en 36,6 min** |
-| Script usine (fonderies et façonneuses) | Tier 0 en 37,5 min |
-| Script simple (tout à la main + foreuses portatives) | Tier 0 en 75,1 min |
-| IA sans imitation (600 000 actions) | 5 upgrades sur 6 au mieux, en 3 h |
+| Script usine (fonderies et constructeurs) | Tier 0 en 45,6 min |
+| Script simple (tout à la main + foreuses portables) | Tier 0 en 121,9 min |
 | Hasard | 1 upgrade en 3 h |
+| IA | à entraîner sur ton PC avec `python train.py` |
 
-L'IA a appris la stratégie du script usine, puis l'a un peu améliorée : elle gagne environ 1 min, surtout sur les HUB Upgrades 2 et 3.
+Avec les durées réelles de fabrication à la main (6 s par lingot), construire des machines rapporte encore plus qu'avec les estimations de départ.
+
+Avec les estimations de départ, l'IA entraînée (imitation, puis 500 000 actions seule) avait fini le Tier 0 en 36,6 min, contre 37,5 min pour le script usine. Sans imitation, elle n'avait pas dépassé 5 upgrades sur 6 en 3 h.
 
 ## Tests
 

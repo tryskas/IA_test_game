@@ -130,6 +130,15 @@ class ScriptedBot:
         recipe_name = PRODUCER[item]
         if recipe_name not in sim.unlocked:
             return None
+        needs = data.RECIPES[recipe_name].needs
+        if needs is not None and needs not in sim.structures:
+            build = Action("build", needs, needs)
+            if sim.is_valid(build):
+                return ACTION_INDEX[build]
+            for ingredient, qty in data.BUILDINGS[needs].cost.items():
+                if sim.stock[ingredient] < qty:
+                    return self._obtain(sim, ingredient)
+            return None
         for ingredient, qty in data.RECIPES[recipe_name].inputs.items():
             if sim.stock[ingredient] + 1e-9 < qty:
                 return self._obtain(sim, ingredient)

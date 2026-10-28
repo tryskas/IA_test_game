@@ -24,11 +24,23 @@ class HandActionsTest(unittest.TestCase):
 
     def test_craft_chains_as_many_crafts_as_fit_in_a_batch(self):
         sim = Simulation()
-        sim.stock["iron_ingot"] = 10
-        seconds = do(sim, "craft", "iron_rod")  # 4 s per rod, 10 s batch -> 2 rods
-        self.assertEqual(sim.stock["iron_rod"], 2)
-        self.assertEqual(sim.stock["iron_ingot"], 8)
-        self.assertEqual(seconds, 8)
+        sim.stock["iron_ingot"] = 12
+        seconds = do(sim, "craft", "iron_rod")  # 2 s per rod by hand, 10 s batch -> 5 rods
+        self.assertEqual(sim.stock["iron_rod"], 5)
+        self.assertEqual(sim.stock["iron_ingot"], 7)
+        self.assertEqual(seconds, 10)
+
+    def test_portable_miner_needs_the_equipment_workshop(self):
+        sim = Simulation()
+        sim.unlocked.update(data.HUB_UPGRADES[0].unlocks)
+        sim.stock.update({"iron_plate": 8, "iron_rod": 8})
+        self.assertFalse(sim.is_valid(Action("craft", "portable_miner")))
+        do(sim, "build", "workshop", "workshop")
+        self.assertIn("workshop", sim.structures)
+        self.assertFalse(sim.is_valid(Action("build", "workshop", "workshop")))  # only one
+        seconds = do(sim, "craft", "portable_miner")
+        self.assertEqual(sim.stock["portable_miner"], 1)
+        self.assertEqual(seconds, data.RECIPES["portable_miner"].handcraft_seconds)
 
     def test_craft_needs_the_ingredients(self):
         sim = Simulation()

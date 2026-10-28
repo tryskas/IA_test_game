@@ -1,9 +1,9 @@
-"""Game data for the mini-Satisfactory simulator: Tier 0 (the six HUB upgrades) of Satisfactory 1.0.
+"""Game data for the mini-Satisfactory simulator: Tier 0 (the six HUB upgrades) of Satisfactory.
 
 Every number lives here so it can be checked against the game and fixed in one
-place. HUB upgrade costs and unlocks, machine recipes, building costs, the
-Miner Mk.1 rate and machine power use come from the game. Values tagged APPROX
-are estimates (mostly how fast the player does things by hand); change them
+place. HUB upgrade costs and unlocks, recipes (by hand and in machines) and
+building costs were read from the game itself (version 1.2.4.1, through the
+Ficsit Remote Monitoring mod). Values tagged APPROX are estimates; change them
 freely, the rest of the code adapts.
 """
 from __future__ import annotations
@@ -31,7 +31,7 @@ ITEMS: dict[str, Item] = {
     "cable": Item("Câble", 200),
     "concrete": Item("Béton", 500),
     "reinforced_iron_plate": Item("Plaque de fer renforcée", 100),
-    "portable_miner": Item("Foreuse portative", 50),
+    "portable_miner": Item("Foreuse portable", 50),
 }
 
 # Resources the player can mine, and the unlock needed before mining one is useful
@@ -49,14 +49,15 @@ class Recipe:
     outputs: dict[str, float]
     seconds: float  # one cycle in a machine
     machine: str | None  # building that can run it automatically (None: by hand only)
-    handcraft_seconds: float  # one craft at the Craft Bench / Equipment Workshop (APPROX)
+    handcraft_seconds: float  # one craft at the Craft Bench / Equipment Workshop
+    needs: str | None = None  # building that must exist to craft it by hand
 
 
 RECIPES: dict[str, Recipe] = {
-    "iron_ingot": Recipe({"iron_ore": 1}, {"iron_ingot": 1}, 2, "smelter", 2),
-    "copper_ingot": Recipe({"copper_ore": 1}, {"copper_ingot": 1}, 2, "smelter", 2),
+    "iron_ingot": Recipe({"iron_ore": 1}, {"iron_ingot": 1}, 2, "smelter", 6),
+    "copper_ingot": Recipe({"copper_ore": 1}, {"copper_ingot": 1}, 2, "smelter", 6),
     "iron_plate": Recipe({"iron_ingot": 3}, {"iron_plate": 2}, 6, "constructor", 6),
-    "iron_rod": Recipe({"iron_ingot": 1}, {"iron_rod": 1}, 4, "constructor", 4),
+    "iron_rod": Recipe({"iron_ingot": 1}, {"iron_rod": 1}, 4, "constructor", 2),
     "wire": Recipe({"copper_ingot": 1}, {"wire": 2}, 4, "constructor", 4),
     "cable": Recipe({"wire": 2}, {"cable": 1}, 2, "constructor", 2),
     "screw": Recipe({"iron_rod": 1}, {"screw": 4}, 6, "constructor", 6),
@@ -65,8 +66,10 @@ RECIPES: dict[str, Recipe] = {
     "reinforced_iron_plate": Recipe(
         {"iron_plate": 6, "screw": 12}, {"reinforced_iron_plate": 1}, 12, None, 12
     ),
-    # Crafted at the Equipment Workshop.
-    "portable_miner": Recipe({"iron_plate": 2, "iron_rod": 4}, {"portable_miner": 1}, 8, None, 8),
+    # Crafted at the Equipment Workshop, which has to be built first.
+    "portable_miner": Recipe(
+        {"iron_plate": 2, "iron_rod": 4}, {"portable_miner": 1}, 40, None, 40, needs="workshop"
+    ),
 }
 
 
@@ -78,12 +81,14 @@ class Building:
     extracts_per_min: float = 0.0  # > 0 for miners, on a normal-purity node
     belt_ports: bool = True  # False: its output must always be collected by hand
     replaces: str | None = None  # placed building it can be built over (and recycles)
+    structure: bool = False  # built once, produces nothing by itself (a workbench)
 
 
 BUILDINGS: dict[str, Building] = {
+    "workshop": Building("Atelier d'équipement", {"iron_plate": 6, "iron_rod": 4}, 0, structure=True),
     # APPROX: extraction rate of the Portable Miner.
     "portable_miner": Building(
-        "Foreuse portative", {"portable_miner": 1}, 0, extracts_per_min=20, belt_ports=False
+        "Foreuse portable", {"portable_miner": 1}, 0, extracts_per_min=20, belt_ports=False
     ),
     "miner_mk1": Building(
         "Foreuse Mk.1",
@@ -93,7 +98,7 @@ BUILDINGS: dict[str, Building] = {
         replaces="portable_miner",
     ),
     "smelter": Building("Fonderie", {"iron_rod": 5, "wire": 8}, 4),
-    "constructor": Building("Façonneuse", {"reinforced_iron_plate": 2, "cable": 8}, 4),
+    "constructor": Building("Constructeur", {"reinforced_iron_plate": 2, "cable": 8}, 4),
 }
 
 PURITY: dict[str, float] = {"impure": 0.5, "normal": 1.0, "pure": 2.0}
@@ -116,7 +121,7 @@ class HubUpgrade:
 STARTING_UNLOCKS: tuple[str, ...] = ("iron_ingot", "iron_plate", "iron_rod")
 
 HUB_UPGRADES: tuple[HubUpgrade, ...] = (
-    HubUpgrade("HUB Upgrade 1", {"iron_rod": 10}, ("portable_miner",)),
+    HubUpgrade("HUB Upgrade 1", {"iron_rod": 10}, ("workshop", "portable_miner")),
     # APPROX: we assume this upgrade also adds the HUB's Biomass Burner, since
     # the Smelter it unlocks needs power and the standalone burner comes later.
     HubUpgrade(

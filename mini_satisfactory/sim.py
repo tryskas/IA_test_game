@@ -43,6 +43,8 @@ class Action:
             return "Fabriquer à la main : " + ", ".join(data.label(i) for i in outputs)
         if self.kind == "build":
             building = data.BUILDINGS[self.building].label
+            if self.target == self.building:
+                return f"Construire : {building}"
             return f"Construire : {building} ({data.label(self.target)})"
         if self.kind == "collect":
             return "Tournée des machines (vider / remplir)"
@@ -55,7 +57,9 @@ def _build_actions() -> tuple[Action, ...]:
     actions.append(Action("gather"))
     actions += [Action("craft", name) for name in data.RECIPES]
     for name, building in data.BUILDINGS.items():
-        if building.extracts_per_min:
+        if building.structure:
+            actions.append(Action("build", name, name))
+        elif building.extracts_per_min:
             actions += [Action("build", res, name) for res in data.RAW_RESOURCES]
         else:
             actions += [
@@ -171,6 +175,7 @@ class Simulation:
         self.upgrades_done = 0
         self.upgrade_times: list[float] = []
         self.machines: list[Machine] = []
+        self.structures: set[str] = set()  # built workbenches, like the Equipment Workshop
         self.nodes: dict[str, list[Machine | None]] = {
             res: [None] * len(purities) for res, purities in data.START_NODES.items()
         }
@@ -204,6 +209,8 @@ class Simulation:
         return sum(data.BUILDINGS[m.building].power_mw for m in self.machines)
 
     def count(self, building: str, target: str) -> int:
+        if data.BUILDINGS[building].structure:
+            return int(building in self.structures)
         return sum(1 for m in self.machines if m.building == building and m.target == target)
 
     def free_nodes(self, resource: str) -> int:
@@ -229,7 +236,12 @@ class Simulation:
         if kind == "gather":
             return "hub_burner" in self.unlocked
         if kind == "craft":
-            return action.target in self.unlocked and self.craftable(action.target) >= 1
+            needs = data.RECIPES[action.target].needs
+            return (
+                action.target in self.unlocked
+                and (needs is None or needs in self.structures)
+                and self.craftable(action.target) >= 1
+            )
         if kind == "build":
             return self._build_plan(action) is not None
         if kind == "collect":
@@ -243,6 +255,9 @@ class Simulation:
         building = data.BUILDINGS[action.building]
         if action.building not in self.unlocked:
             return None
+        if building.structure:
+            built = action.building in self.structures
+            return (None, None) if not built and self.has(building.cost) else None
         if not building.extracts_per_min:
             if action.target not in self.unlocked:
                 return None
@@ -307,6 +322,12 @@ class Simulation:
     def _do_build(self, action: Action) -> None:
         node, replaced = self._build_plan(action)
         building = data.BUILDINGS[action.building]
+        if building.structure:
+            for item, qty in building.cost.items():
+                self.stock[item] -= qty
+            self.advance(data.BUILD_SECONDS)
+            self.structures.add(action.building)
+            return
         if replaced is not None:
             self._remove(replaced)
             for item, qty in data.BUILDINGS[replaced.building].cost.items():

@@ -53,19 +53,20 @@ STATUS = {
 RESOURCE_LABELS = {"iron_ore": "Fer", "copper_ore": "Cuivre", "limestone": "Calcaire"}
 PURITY_LABELS = {"impure": "impur", "normal": "normal", "pure": "pur"}
 UNLOCK_LABELS = {
-    "portable_miner": "foreuse portative",
+    "workshop": "atelier d'équipement",
+    "portable_miner": "foreuse portable",
     "smelter": "fonderie",
     "copper_ingot": "cuivre",
     "wire": "fil",
     "cable": "câble",
     "hub_burner": "brûleur du HUB",
-    "constructor": "façonneuse",
+    "constructor": "constructeur",
     "screw": "vis",
     "concrete": "béton",
     "reinforced_iron_plate": "plaque renforcée",
     "conveyor_belt": "convoyeurs",
     "miner_mk1": "foreuse Mk.1",
-    "space_elevator": "ascenseur spatial",
+    "space_elevator": "ascenseur orbital",
     "biomass_burner": "brûleur à biomasse",
 }
 HELP = "Espace pause · ←/→ ±30 s · ↑/↓ vitesse · 1-4 joueur · Début recommencer · Échap quitter"
@@ -303,6 +304,8 @@ class Viewer:
         # Processing machines, grouped by recipe.
         y += 6
         self.text("MACHINES", (inner.x, y), "small", MUTED)
+        if "workshop" in frame.structures:
+            self.text("Atelier d'équipement construit", (inner.right, y), "small", TEAL, anchor="topright")
         y += 20
         groups: dict[tuple[str, str], list[MachineView]] = {}
         for machine in frame.machines:
