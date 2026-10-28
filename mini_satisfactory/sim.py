@@ -85,6 +85,62 @@ def _item_depth() -> dict[str, int]:
 ITEM_DEPTH = _item_depth()
 
 
+def _raw_costs() -> dict[str, float]:
+    """Amount of raw resources that goes into one of each item."""
+    cost = {item: 1.0 if item in data.RAW_RESOURCES else 0.0 for item in data.ITEMS}
+    for _ in range(len(data.RECIPES)):
+        for recipe in data.RECIPES.values():
+            total = sum(q * cost[i] for i, q in recipe.inputs.items())
+            for out, qty in recipe.outputs.items():
+                cost[out] = total / qty
+    return cost
+
+
+RAW_COST = _raw_costs()
+
+
+def upgrade_progress(stock: dict[str, float], upgrades_done: int) -> float:
+    """Share (0 to 1) of the next HUB upgrade already in stock, weighted by raw cost."""
+    if upgrades_done >= len(data.HUB_UPGRADES):
+        return 0.0
+    cost = data.HUB_UPGRADES[upgrades_done].cost
+    weights = {item: qty * RAW_COST[item] for item, qty in cost.items()}
+    have = sum(w * min(1.0, max(0.0, stock[item]) / cost[item]) for item, w in weights.items())
+    return have / sum(weights.values())
+
+
+def _share_out(stock: dict[str, float], upgrades_done: int):
+    """Yield (upgrade, items it still lacks, share it has) for each remaining upgrade.
+
+    The stock is shared out in upgrade order, so each item counts only once.
+    """
+    left = {item: max(0.0, qty) for item, qty in stock.items()}
+    for upgrade in data.HUB_UPGRADES[upgrades_done:]:
+        weights = {item: qty * RAW_COST[item] for item, qty in upgrade.cost.items()}
+        covered, missing = 0.0, {}
+        for item, qty in upgrade.cost.items():
+            used = min(left[item], qty)
+            left[item] -= used
+            covered += weights[item] * used / qty
+            if used < qty:
+                missing[item] = qty - used
+        yield upgrade, missing, covered / sum(weights.values())
+
+
+def tier_progress(stock: dict[str, float], upgrades_done: int) -> float:
+    """Upgrades delivered plus the share of every remaining one the stock covers (0 to 6)."""
+    return upgrades_done + sum(share for _, _, share in _share_out(stock, upgrades_done))
+
+
+def missing_for_tier(stock: dict[str, float], upgrades_done: int) -> dict[str, float]:
+    """Items still to make for all the remaining upgrades, beyond what is in stock."""
+    total: dict[str, float] = {}
+    for _, missing, _ in _share_out(stock, upgrades_done):
+        for item, qty in missing.items():
+            total[item] = total.get(item, 0.0) + qty
+    return total
+
+
 @dataclass
 class Machine:
     building: str

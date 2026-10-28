@@ -14,7 +14,9 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-      # The simulator and the environment only need these; PyTorch is for training.
-      - run: pip install gymnasium numpy
+      # Everything but PyTorch, which only training needs.
+      - run: pip install gymnasium numpy pygame-ce
       - name: Unit tests
+        env:
+          SDL_VIDEODRIVER: dummy
         run: python -m unittest discover -s tests -t . -v

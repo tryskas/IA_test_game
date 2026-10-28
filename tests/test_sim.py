@@ -2,7 +2,7 @@ import unittest
 
 from mini_satisfactory import data
 from mini_satisfactory.bots import FACTORY_PLAN, RandomBot, ScriptedBot, play
-from mini_satisfactory.sim import ACTION_INDEX, Action, Simulation
+from mini_satisfactory.sim import ACTION_INDEX, Action, Simulation, missing_for_tier, tier_progress
 
 
 def do(sim: Simulation, kind: str, target: str | None = None, building: str | None = None) -> float:
@@ -44,6 +44,22 @@ class HandActionsTest(unittest.TestCase):
         self.assertEqual(sim.stock["iron_rod"], 2)
         self.assertIn("portable_miner", sim.unlocked)
         self.assertEqual(sim.upgrade_times, [data.SUBMIT_SECONDS])
+
+
+class ProgressTest(unittest.TestCase):
+    def test_stock_counts_toward_later_upgrades_once(self):
+        stock = {item: 0.0 for item in data.ITEMS}
+        stock["iron_rod"] = 30  # 10 for upgrade 1, the other 20 for upgrade 2
+        # Upgrade 2 also wants 10 plates; a plate takes 1.5 ore, a rod 1.
+        self.assertAlmostEqual(tier_progress(stock, 0), 1 + 20 / (20 + 15))
+        missing = missing_for_tier(stock, 0)
+        self.assertEqual(missing["iron_rod"], 20 + 75 + 100)
+        self.assertEqual(missing["iron_plate"], 10 + 20 + 75 + 100)
+
+    def test_finished_tier_has_full_progress(self):
+        stock = {item: 0.0 for item in data.ITEMS}
+        self.assertEqual(tier_progress(stock, len(data.HUB_UPGRADES)), len(data.HUB_UPGRADES))
+        self.assertEqual(missing_for_tier(stock, len(data.HUB_UPGRADES)), {})
 
 
 class MachinesTest(unittest.TestCase):

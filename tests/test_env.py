@@ -4,8 +4,8 @@ import numpy as np
 from gymnasium.utils.env_checker import check_env
 
 from mini_satisfactory import data
-from mini_satisfactory.bots import ScriptedBot
-from mini_satisfactory.env import POINTS_PER_UPGRADE, MiniSatisfactoryEnv
+from mini_satisfactory.bots import FACTORY_PLAN, ScriptedBot
+from mini_satisfactory.env import DELIVERY_POINTS, POINTS_PER_UPGRADE, MiniSatisfactoryEnv
 
 
 class EnvTest(unittest.TestCase):
@@ -15,14 +15,15 @@ class EnvTest(unittest.TestCase):
     def test_reward_is_upgrade_points_minus_minutes(self):
         env = MiniSatisfactoryEnv()
         env.reset()
-        bot = ScriptedBot()
+        bot = ScriptedBot(FACTORY_PLAN)
         total, done, info = 0.0, False, {}
         while not done:
             _, reward, terminated, truncated, info = env.step(bot.act(env.sim))
             total += reward
             done = terminated or truncated
         self.assertTrue(terminated)
-        expected = POINTS_PER_UPGRADE * len(data.HUB_UPGRADES) - info["game_time_s"] / 60
+        points = (POINTS_PER_UPGRADE + DELIVERY_POINTS) * len(data.HUB_UPGRADES)
+        expected = points - info["game_time_s"] / 60
         self.assertAlmostEqual(total, expected, places=6)
 
     def test_random_masked_run_stops_at_the_time_limit(self):
