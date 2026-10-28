@@ -17,6 +17,7 @@ from game_state import ROOT, GameState, read_state, to_simulation
 from mini_satisfactory import data
 from mini_satisfactory.ai_player import DEFAULT_MODEL, AIPlayer
 from mini_satisfactory.sim import ACTIONS
+from moves import CALIBRATION_FILE, Calibration, heading, wrap
 
 PURITY_LABELS = {"impure": "impur", "normal": "normal", "pure": "pur"}
 
@@ -36,7 +37,9 @@ def where_to_go(state: GameState, resource: str) -> str:
     node = state.nearest(resource)
     if node is None:
         return ""
-    turn = state.turn_towards(node)
+    # The mod's yaw is not the map direction: the calibration knows the difference.
+    cal = Calibration.load() if CALIBRATION_FILE.exists() else Calibration()
+    turn = wrap(heading(state.position[0], state.position[1], node.x, node.y) - cal.facing(state.yaw))
     side = "droite" if turn > 0 else "gauche"
     direction = "droit devant" if abs(turn) < 10 else f"tourne de {abs(turn):.0f}° vers la {side}"
     return f" | gisement {PURITY_LABELS[node.purity]} le plus proche à {state.distance_to(node):.0f} m, {direction}"

@@ -13,9 +13,10 @@ from __future__ import annotations
 
 import argparse
 import time
+import urllib.error
 
 from game_io import RealGame, Stopped
-from game_state import ROOT, read_state, to_simulation
+from game_state import ROOT, read_player, read_state, to_simulation
 from moves import Calibration, Mover, SkillError, calibrate
 
 RESOURCES = {"fer": "iron_ore", "cuivre": "copper_ore", "calcaire": "limestone"}
@@ -80,6 +81,13 @@ def main() -> None:
     if args.commande in ("aller", "miner") and args.ressource is None:
         parser.error("indique la ressource : fer, cuivre ou calcaire")
 
+    try:
+        read_player()
+    except (urllib.error.URLError, ConnectionError, TimeoutError):
+        raise SystemExit(
+            "Le mod ne répond pas. Lance le jeu depuis le Mod Manager, charge ta partie "
+            "et tape dans le chat du jeu : /frm http start"
+        )
     game = RealGame()
     countdown()
     try:
@@ -101,6 +109,8 @@ def main() -> None:
         print(f"Arrêt : {reason}.")
     except SkillError as problem:
         print(f"Échec : {problem}.")
+    except (urllib.error.URLError, ConnectionError, TimeoutError):
+        print("Arrêt : le mod ne répond plus (jeu fermé ou serveur arrêté).")
     finally:
         game.release_all()
 
