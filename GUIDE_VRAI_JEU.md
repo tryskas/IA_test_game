@@ -225,6 +225,34 @@ python real_game/agent.py miner fer 10
 python real_game/agent.py jouer
 ```
 
+## Étape 6 : montrer une partie à l'IA
+
+Pour que l'IA joue seule du début à la fin, elle doit connaître chaque menu du jeu (inventaire, capsule, construction du HUB, établi, terminal). Joue une fois le début d'une **nouvelle partie** pendant que ce script enregistre :
+
+```bash
+python real_game/record_demo.py
+```
+
+Il garde une image à chaque clic, les touches utilisées et leur durée, une petite image toutes les 5 s, et l'état du jeu via le mod. Rien n'est enregistré quand une autre fenêtre est active. F12 arrête l'enregistrement, qui va dans `demos/`.
+
+Ensuite, envoie la démonstration sur la branche pour que je l'analyse :
+
+```bash
+git pull
+```
+
+```bash
+git add demos
+```
+
+```bash
+git commit -m "Démonstration du début de partie"
+```
+
+```bash
+git push
+```
+
 ## Ensuite : relier l'IA au vrai jeu
 
 Une fois les quatre étapes validées, l'IA jouera en boucle :
