@@ -1,0 +1,9 @@
+# Tools to work with the real game, on Windows.
+numpy
+opencv-python-headless
+mss
+bettercam; sys_platform == "win32"
+pygetwindow; sys_platform == "win32"
+pydirectinput-rgx; sys_platform == "win32"
+pynput
+easyocr

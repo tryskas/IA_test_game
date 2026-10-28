@@ -4,7 +4,7 @@ Le vrai jeu est trop lent et trop complexe pour qu'une IA y apprenne par essais-
 
 Une partie y dure une fraction de seconde au lieu d'une heure. Une IA peut donc jouer des milliers de parties et apprendre à finir le Tier 0 le plus vite possible. Une fenêtre Python permet ensuite de la **regarder jouer**, en course contre des bots écrits à la main.
 
-Tout tourne en local, en Python. Le vrai jeu n'est pas utilisé.
+Tout tourne en local, en Python, sans le vrai jeu. Pour brancher l'IA sur le vrai Satisfactory, suis le guide [GUIDE_VRAI_JEU.md](GUIDE_VRAI_JEU.md) (en cours).
 
 ## Démarrage rapide
 
@@ -98,6 +98,7 @@ python play.py --joueur ia
 | `mini_satisfactory/replay.py` | Enregistre une partie, un instantané toutes les 2 s de jeu |
 | `mini_satisfactory/viewer.py` | La fenêtre pygame |
 | `watch.py`, `train.py`, `play.py` | Les commandes ci-dessus |
+| `real_game/` | Les scripts pour le vrai jeu : capture d'écran, données du mod, clavier et souris, lecture du texte (voir le guide) |
 | `models/ia_tier0.zip` | L'IA entraînée |
 | `tests/` | Tests automatiques |
 
@@ -154,4 +155,4 @@ python -m unittest discover -s tests -t . -v
 
 1. Étendre le simulateur aux tiers suivants (Space Elevator, Tier 1 et 2).
 2. Varier la carte de départ (nombre et pureté des gisements) pour que l'IA s'adapte au lieu d'apprendre une seule route.
-3. Plus tard : brancher l'IA sur le vrai jeu, via un mod sur le PC qui lit la partie et exécute les actions.
+3. Brancher l'IA sur le vrai jeu : en cours, voir [GUIDE_VRAI_JEU.md](GUIDE_VRAI_JEU.md).

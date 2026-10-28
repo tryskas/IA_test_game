@@ -5,3 +5,6 @@ venv/
 # Training checkpoints other than the shipped model
 models/*
 !models/ia_tier0.zip
+
+# Screenshots and game data from the real game
+captures/

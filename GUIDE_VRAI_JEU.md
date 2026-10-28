@@ -1,0 +1,198 @@
+# Guide : brancher l'IA sur le vrai Satisfactory
+
+Pour jouer au vrai jeu, l'IA a besoin de quatre choses :
+
+1. **des yeux** : voir l'écran du jeu (capture d'écran en continu) ;
+2. **des données exactes** : l'inventaire, les machines, l'électricité, sans les deviner à l'image (grâce à un mod) ;
+3. **des mains** : appuyer sur les touches et bouger la souris ;
+4. **un traducteur** : transformer une action du mini-jeu (« fabriquer des barres de fer ») en gestes dans le vrai jeu.
+
+Ce guide installe et vérifie ces pièces une par une. Chaque étape a son script de vérification dans le dossier `real_game/`. **Après chaque étape, envoie-moi ce que le script affiche** (et les fichiers qu'il crée) : on construira l'étape suivante à partir de tes vraies données.
+
+À savoir avant de commencer :
+
+- Je ne peux pas lancer le jeu de mon côté. Ces scripts ont été écrits sans le jeu : tes retours servent à les ajuster.
+- Le mini-jeu ignore les déplacements et la construction en 3D. Sur le vrai jeu, ce sont les parties les plus difficiles. On commencera par ce qui se fait sans bouger, comme fabriquer à l'établi.
+- Les mods et l'automatisation sont interdits dans les classements de speedrun : c'est une expérience, pas une tentative de record.
+- Utilise une **sauvegarde dédiée**, pas ta partie principale.
+
+## Étape 0 : préparer le PC et le jeu
+
+### Installer les outils
+
+1. Installe **Python 3.12** depuis [python.org](https://www.python.org/downloads/windows/). Pendant l'installation, coche **« Add python.exe to PATH »**.
+2. Installe **Git** depuis [git-scm.com](https://git-scm.com/download/win) (ou utilise GitHub Desktop).
+3. Ouvre un terminal (touche Windows, tape `cmd`) et récupère le projet :
+
+```bash
+git clone https://github.com/tryskas/IA_test_game.git
+```
+
+```bash
+cd IA_test_game
+```
+
+```bash
+git checkout claude/happy-hawking-zw1qmr
+```
+
+4. Crée l'environnement Python et installe les bibliothèques (quelques minutes) :
+
+```bash
+python -m venv .venv
+```
+
+```bash
+.venv\Scripts\activate
+```
+
+```bash
+pip install -r requirements.txt -r real_game/requirements.txt
+```
+
+À chaque nouvelle session, pense à relancer `.venv\Scripts\activate` dans le dossier du projet.
+
+Ce que ces bibliothèques font :
+
+| Bibliothèque | Rôle |
+|---|---|
+| `bettercam` | capture d'écran rapide via DirectX (plus de 100 images/s) |
+| `mss` | capture d'écran plus lente, en secours |
+| `opencv` | traitement d'image : découper, comparer, chercher un motif |
+| `easyocr` | lire le texte affiché à l'écran (en français et en anglais) |
+| `pygetwindow` | trouver la fenêtre du jeu |
+| `pydirectinput-rgx` | envoyer des touches et des mouvements de souris que les jeux DirectX acceptent |
+| `pynput` | surveiller la touche d'arrêt d'urgence (F12) |
+
+### Régler le jeu
+
+Dans les options du jeu :
+
+- **affichage** : mode fenêtré sans bordure (borderless), en **1920 x 1080** si ton écran le permet ;
+- **flou de mouvement** : désactivé (les captures seront plus nettes) ;
+- **taille de l'interface** : laisse la valeur par défaut, et ne la change plus ensuite ;
+- **langue** : français, et garde-la (la lecture du texte en dépend).
+
+Note aussi les touches de déplacement (Options > Commandes). Sur un clavier AZERTY, c'est souvent Z, Q, S, D. Reporte-les dans `real_game/config.py`, section `KEYS`.
+
+Enfin, crée une **nouvelle partie** dédiée aux essais, dans la zone de départ la plus simple (Grass Fields).
+
+## Étape 1 : les yeux (capture d'écran)
+
+Lance le jeu et charge ta partie. Dans le terminal :
+
+```bash
+python real_game/check_capture.py
+```
+
+Pendant 5 secondes, bouge un peu la caméra dans le jeu. Le script affiche :
+
+- la fenêtre trouvée et sa taille ;
+- la méthode de capture et le nombre d'images par seconde (30 ou plus, c'est bien) ;
+- 3 captures enregistrées dans le dossier `captures/`.
+
+**Envoie-moi** ce que le script a affiché et une des captures (glisse l'image dans la conversation).
+
+En cas de problème :
+
+- « Je ne trouve pas la fenêtre du jeu » : le jeu doit être lancé, avec une partie chargée.
+- Capture noire : passe le jeu en mode fenêtré sans bordure.
+
+## Étape 2 : les données exactes (mod Ficsit Remote Monitoring)
+
+Lire l'inventaire ou l'électricité à l'image est fragile : un chiffre mal lu, et l'IA se trompe. Le mod **Ficsit Remote Monitoring** fait tourner un petit serveur dans le jeu, qui donne ces données exactes à Python. Il ne modifie pas la partie : il se contente de lire.
+
+1. Installe **Satisfactory Mod Manager** depuis [ficsit.app](https://ficsit.app).
+2. Dans le Mod Manager, cherche **Ficsit Remote Monitoring** et installe-le. Ses dépendances s'installent toutes seules.
+3. Lance le jeu depuis le Mod Manager et charge ta partie.
+4. Ouvre le chat du jeu (touche Entrée) et tape :
+
+```text
+/frm http start
+```
+
+Pour ne plus avoir à le taper, active le démarrage automatique du serveur web dans les options du mod (menu principal du jeu, Options, section du mod).
+
+5. Dans le terminal :
+
+```bash
+python real_game/check_game_data.py
+```
+
+Le script interroge le mod sur chaque type de données (joueur, inventaire, électricité, machines, jalons...), dit lesquels répondent et les enregistre dans `captures/frm/`.
+
+**Envoie-moi** ce que le script a affiché, et les fichiers `getPlayer.json` et `getSchematics.json` s'ils existent. Je m'en servirai pour traduire l'état du vrai jeu dans le format du mini-jeu.
+
+Si Windows demande d'autoriser le jeu sur le réseau, accepte pour les réseaux privés.
+
+## Étape 3 : les mains (clavier et souris)
+
+Place ton personnage dans un endroit sûr : sur un sol plat, rien en main, loin d'un précipice. Puis :
+
+```bash
+python real_game/check_controls.py
+```
+
+Tu as 5 secondes pour cliquer dans le jeu. Le personnage doit ensuite :
+
+1. tourner la caméra à droite, puis à gauche ;
+2. avancer, puis reculer ;
+3. sauter ;
+4. ouvrir l'inventaire, puis le fermer.
+
+Sécurités : **F12 arrête tout immédiatement**, et le script s'arrête aussi dès que le jeu n'est plus la fenêtre active (par exemple avec Alt+Tab).
+
+En cas de problème :
+
+- Le personnage tourne mais n'avance pas : la touche d'avance ne correspond pas. Change `forward` dans `real_game/config.py` (essaie `z` au lieu de `w`, et pareil pour les autres touches).
+- Rien ne bouge du tout : relance le terminal en tant qu'administrateur.
+
+**Envoie-moi** la liste des mouvements qui ont marché et de ceux qui n'ont pas marché.
+
+## Étape 4 : lire l'écran (OCR)
+
+Certaines informations ne sont pas dans le mod, ou se lisent plus simplement à l'écran (un menu ouvert, une recette sélectionnée). Pour tester la lecture de texte :
+
+1. Dans le jeu, ouvre le **terminal du HUB** ou l'**établi**.
+2. Relance `python real_game/check_capture.py` pour avoir une capture de ce menu.
+3. Lance la lecture sur cette capture (remplace le nom du fichier par le tien) :
+
+```bash
+python real_game/check_ocr.py captures/capture_20261028_120000_1.png
+```
+
+La première fois, le script télécharge les modèles de lecture (environ 100 Mo). Il affiche chaque texte trouvé avec sa position, et crée une copie de l'image où chaque texte est encadré (fichier `..._ocr.png`). Les cadres verts sont sûrs, les orange moins.
+
+**Envoie-moi** l'image annotée.
+
+## Ensuite : relier l'IA au vrai jeu
+
+Une fois les quatre étapes validées, l'IA jouera en boucle :
+
+1. **lire** l'état du jeu (le mod pour les chiffres, l'écran pour les menus) ;
+2. le **traduire** dans le format du mini-jeu (stock, machines, upgrades livrés) ;
+3. **choisir** une action : c'est la même IA que dans `watch.py` ;
+4. l'**exécuter** avec une suite de gestes enregistrée pour cette action (une « macro ») ;
+5. **vérifier** dans le mod que l'action a marché, puis recommencer.
+
+Les macros sont à construire une par une, de la plus simple à la plus difficile :
+
+| Action du mini-jeu | Gestes dans le vrai jeu | Difficulté |
+|---|---|---|
+| Fabriquer à la main | ouvrir l'établi, cliquer la recette, maintenir le bouton de fabrication | facile : écran fixe |
+| Livrer le HUB Upgrade | ouvrir le terminal du HUB, déposer les objets | facile |
+| Miner à la main | se placer face au gisement, maintenir la touche d'interaction | moyenne : il faut se déplacer |
+| Ramasser des feuilles | trouver des plantes et les ramasser | moyenne |
+| Faire la tournée des machines | aller à chaque machine, l'ouvrir, la vider ou la remplir | difficile |
+| Construire une machine | ouvrir le menu de construction, viser l'emplacement, poser | difficile : placement en 3D |
+
+Pour les déplacements, on enregistrera la position de chaque lieu utile (HUB, gisements, machines) grâce au mod. Le personnage s'y rendra en orientant la caméra vers la cible, puis en avançant.
+
+## Récapitulatif : ce que tu m'envoies
+
+| Étape | À m'envoyer |
+|---|---|
+| 1. Capture | le texte affiché + une capture |
+| 2. Mod | le texte affiché + `getPlayer.json` et `getSchematics.json` |
+| 3. Contrôles | les mouvements qui ont marché ou non |
+| 4. OCR | l'image annotée `..._ocr.png` |
