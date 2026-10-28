@@ -59,6 +59,16 @@ class Node:
 
 
 @dataclass(frozen=True)
+class PlayerView:
+    x: float  # metres
+    y: float
+    z: float
+    yaw: float  # degrees, as the mod gives it
+    inventory: dict[str, float]  # mini-game items carried
+    other_items: dict[str, float]  # items the mini-game ignores, by in-game name
+
+
+@dataclass(frozen=True)
 class GameState:
     position: tuple[float, float, float]  # metres
     yaw: float  # degrees: where the player looks
@@ -130,17 +140,28 @@ def parse_nodes(entries: list) -> tuple[Node, ...]:
     return tuple(nodes)
 
 
-def read_state(get: Callable[[str], object] = fetch) -> GameState:
-    """Ask the mod for the player, the HUB upgrades and the resource nodes."""
-    player = get("getPlayer")[0]
+def parse_player(entry: dict) -> PlayerView:
     inventory: dict[str, float] = {}
     other: dict[str, float] = {}
-    for stack in player.get("Inventory", []):
+    for stack in entry.get("Inventory", []):
         key = ITEM_CLASSES.get(stack.get("ClassName", ""))
         if key is None:
             other[stack.get("Name", "?")] = other.get(stack.get("Name", "?"), 0) + stack.get("Amount", 0)
         else:
             inventory[key] = inventory.get(key, 0) + stack.get("Amount", 0)
+    x, y, z = _location(entry) or (0.0, 0.0, 0.0)
+    yaw = float((entry.get("location") or {}).get("rotation", 0.0))
+    return PlayerView(x, y, z, yaw, inventory, other)
+
+
+def read_player(get: Callable[[str], object] = fetch) -> PlayerView:
+    """Only the player: quick enough to ask several times a second."""
+    return parse_player(get("getPlayer")[0])
+
+
+def read_state(get: Callable[[str], object] = fetch) -> GameState:
+    """Ask the mod for the player, the HUB upgrades and the resource nodes."""
+    player = parse_player(get("getPlayer")[0])
 
     schematics = {s["ClassName"]: s for s in get("getSchematics")}
     done = 0
@@ -163,9 +184,10 @@ def read_state(get: Callable[[str], object] = fetch) -> GameState:
     except Exception:
         factory = set()
     structures = frozenset(name for cls, name in STRUCTURE_CLASSES.items() if cls in factory)
-    location = _location(player) or (0.0, 0.0, 0.0)
-    yaw = float((player.get("location") or {}).get("rotation", 0.0))
-    return GameState(location, yaw, inventory, other, done, deposited, nodes, structures)
+    return GameState(
+        (player.x, player.y, player.z), player.yaw, player.inventory, player.other_items,
+        done, deposited, nodes, structures,
+    )
 
 
 def to_simulation(state: GameState) -> Simulation:

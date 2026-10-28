@@ -197,6 +197,34 @@ La première fois, le script télécharge les modèles de lecture (environ 100 M
 
 **Envoie-moi** l'image annotée.
 
+## Étape 5 : l'IA joue
+
+Tout passe par une seule commande, `real_game/agent.py`. Chaque commande laisse 5 secondes pour cliquer dans le jeu. **F12 arrête tout**, et quitter la fenêtre du jeu aussi. Le jeu doit tourner avec le mod, avec `/frm http start` tapé dans le chat.
+
+1. **Calibrer**, une seule fois : place-toi sur un terrain plat avec une quinzaine de mètres dégagés devant toi. Le personnage tourne un peu, avance deux fois, et le résultat est enregistré dans `real_game/calibration.json`.
+
+```bash
+python real_game/agent.py calibrer
+```
+
+2. **Se déplacer** : le personnage marche jusqu'au gisement de fer libre le plus proche.
+
+```bash
+python real_game/agent.py aller fer
+```
+
+3. **Miner à la main** : il y va, cherche le gisement du regard, puis mine 10 minerais.
+
+```bash
+python real_game/agent.py miner fer 10
+```
+
+4. **Jouer** : l'IA enchaîne les actions de son plan de jeu. Pour l'instant, elle sait miner et attendre seule. Pour le reste (fabriquer, livrer le HUB, construire...), elle t'affiche l'action et attend que tu la fasses toi-même, jusqu'à ce que ces compétences soient ajoutées.
+
+```bash
+python real_game/agent.py jouer
+```
+
 ## Ensuite : relier l'IA au vrai jeu
 
 Une fois les quatre étapes validées, l'IA jouera en boucle :

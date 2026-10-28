@@ -8,3 +8,6 @@ models/*
 
 # Screenshots and game data from the real game
 captures/
+
+# Measured by real_game/agent.py calibrer, specific to each PC
+real_game/calibration.json
