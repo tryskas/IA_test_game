@@ -22,7 +22,7 @@ Ce guide installe et vérifie ces pièces une par une. Chaque étape a son scrip
 
 1. Installe **Python 3.12** depuis [python.org](https://www.python.org/downloads/windows/). Pendant l'installation, coche **« Add python.exe to PATH »**.
 2. Installe **Git** depuis [git-scm.com](https://git-scm.com/download/win) (ou utilise GitHub Desktop).
-3. Ouvre un terminal (touche Windows, tape `cmd`) et récupère le projet :
+3. Ouvre **PowerShell** (touche Windows, tape `powershell`) et récupère le projet :
 
 ```bash
 git clone https://github.com/tryskas/IA_test_game.git
@@ -42,6 +42,16 @@ git checkout claude/happy-hawking-zw1qmr
 python -m venv .venv
 ```
 
+Par défaut, PowerShell refuse de lancer le script qui active l'environnement (erreur « l'exécution de scripts est désactivée sur ce système »). Autorise-le une fois pour toutes, pour ton compte uniquement :
+
+```bash
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+```
+
+Réponds « O » (Oui) si PowerShell demande confirmation. Ce réglage autorise les scripts créés sur ton PC, comme celui de l'environnement Python. Les scripts téléchargés d'Internet doivent toujours être signés.
+
+Puis active l'environnement et installe les bibliothèques :
+
 ```bash
 .venv\Scripts\activate
 ```
@@ -50,7 +60,7 @@ python -m venv .venv
 pip install -r requirements.txt -r real_game/requirements.txt
 ```
 
-À chaque nouvelle session, pense à relancer `.venv\Scripts\activate` dans le dossier du projet.
+Quand l'environnement est actif, `(.venv)` apparaît au début de la ligne. À chaque nouvelle fenêtre PowerShell, relance `.venv\Scripts\activate` dans le dossier du projet.
 
 Ce que ces bibliothèques font :
 
@@ -68,7 +78,7 @@ Ce que ces bibliothèques font :
 
 Dans les options du jeu :
 
-- **affichage** : mode fenêtré sans bordure (borderless), en **1920 x 1080** si ton écran le permet ;
+- **affichage** : mode fenêtré sans bordure (borderless), à la résolution de ton écran (par exemple 2560 x 1440). Garde ensuite toujours la même : les positions des menus à l'écran en dépendent ;
 - **flou de mouvement** : désactivé (les captures seront plus nettes) ;
 - **taille de l'interface** : laisse la valeur par défaut, et ne la change plus ensuite ;
 - **langue** : français, et garde-la (la lecture du texte en dépend).

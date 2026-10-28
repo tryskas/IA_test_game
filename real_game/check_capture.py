@@ -13,7 +13,7 @@ from datetime import datetime
 import cv2
 import numpy as np
 
-from common import GameWindow, find_game_window
+from common import GameWindow, find_game_window, screen_size
 from config import CAPTURE_DIR
 
 SECONDS = 5
@@ -68,8 +68,10 @@ def main() -> None:
         )
     print(f"Fenêtre trouvée : « {window.title} », {window.width} x {window.height} pixels "
           f"à la position ({window.left}, {window.top})")
-    if (window.width, window.height) != (1920, 1080):
-        print("  Conseil : règle le jeu en 1920 x 1080, mode « Fenêtré sans bordure », pour la suite du guide.")
+    screen_w, screen_h = screen_size()
+    if (window.width, window.height) != (screen_w, screen_h):
+        print(f"  Conseil : le jeu ne remplit pas l'écran ({screen_w} x {screen_h}). Passe-le en mode "
+              "« Fenêtré sans bordure » pour la suite du guide.")
 
     CAPTURE_DIR.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")

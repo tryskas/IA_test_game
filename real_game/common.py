@@ -50,6 +50,14 @@ def make_dpi_aware() -> None:
         ctypes.windll.user32.SetProcessDPIAware()
 
 
+def screen_size() -> tuple[int, int]:
+    """Size of the main screen in real pixels (call make_dpi_aware first)."""
+    import ctypes
+
+    user32 = ctypes.windll.user32
+    return user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
+
+
 def open_windows() -> list[GameWindow]:
     import pygetwindow
 
