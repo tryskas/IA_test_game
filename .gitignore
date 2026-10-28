@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+# Training checkpoints other than the shipped model
+models/*
+!models/ia_tier0.zip

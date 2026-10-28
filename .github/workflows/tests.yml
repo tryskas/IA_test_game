@@ -1,0 +1,20 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      # The simulator and the environment only need these; PyTorch is for training.
+      - run: pip install gymnasium numpy
+      - name: Unit tests
+        run: python -m unittest discover -s tests -t . -v
