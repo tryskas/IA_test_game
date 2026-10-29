@@ -71,18 +71,56 @@ class FakeGame:
                 self.y += 5.5 * math.sin(math.radians(self.facing)) * dt
 
 
-class FakeEyes:
-    """Sees a wall straight ahead, open on both sides."""
+class WallWorld(FakeGame):
+    """The fake world, with walls (rectangles) the player can't walk through."""
 
-    def __init__(self, game):
+    def __init__(self, walls, **kwargs):
+        super().__init__(**kwargs)
+        self.walls = walls
+        self.moves: list[int] = []
+
+    def inside_wall(self, x, y):
+        return any(x0 <= x <= x1 and y0 <= y <= y1 for x0, y0, x1, y1 in self.walls)
+
+    def mouse(self, dx, dy):
+        self.moves.append(abs(dx))
+        super().mouse(dx, dy)
+
+    def wait(self, seconds):
+        x, y = self.x, self.y
+        super().wait(seconds)
+        if self.inside_wall(self.x, self.y):
+            self.x, self.y = x, y  # bumped into a wall
+
+
+class RayEyes:
+    """Sees the walls of a WallWorld, as the depth analysis would report them."""
+
+    def __init__(self, world, fov=90.0, aspect=9 / 16):
         from perception import View
 
-        self.game = game
-        self.View = View
+        self.world, self.fov, self.aspect, self.View = world, fov, aspect, View
 
     @property
     def latest(self):
-        return self.View(self.game.now(), (), (0.9,) * 5 + (0.1,) * 5 + (0.9,) * 5, 90.0)
+        import math as m
+
+        rows = []
+        for i in range(15):
+            bearing = m.degrees(m.atan((i + 0.5 - 7.5) / 7.5 * m.tan(m.radians(self.fov / 2))))
+            angle = m.radians(self.world.facing + bearing)
+            hit = None
+            for k in range(1, 49):
+                d = k * 0.25
+                if self.world.inside_wall(self.world.x + d * m.cos(angle), self.world.y + d * m.sin(angle)):
+                    hit = d
+                    break
+            if hit is None:
+                rows.append(None)
+                continue
+            below = m.degrees(m.atan(1.7 / hit)) - self.world.pitch
+            rows.append((0.5 * m.tan(m.radians(below)) + self.aspect / 2) / self.aspect)
+        return self.View(self.world.now(), (), (0.9,) * 15, self.fov, tuple(rows), (False,) * 15, self.aspect)
 
 
 class CreatureEyes:
@@ -92,6 +130,7 @@ class CreatureEyes:
         from perception import Threat, View
 
         self.game, self.size, self.View, self.Threat = game, size, View, Threat
+        self.confidence = 0.18
 
     def fresh(self, since, timeout=2.0):
         threat = self.Threat(30.0, 0.0, self.size, 0.5, "animal", (0, 0, 1, 1))
@@ -146,11 +185,21 @@ class MoverTest(unittest.TestCase):
         with self.assertRaises(SkillError):
             self.mover(game).mine_by_hand("copper_ore", 5)
 
-    def test_steers_round_what_the_eyes_see_in_the_way(self):
-        game = FakeGame()
-        mover = Mover(game, calibrate(game), log=lambda *_: None, eyes=FakeEyes(game))
-        self.assertGreater(abs(mover.steer(0)), 10)  # wall ahead: go round it
-        self.assertEqual(mover.steer(40), 40)  # that way is open
+    def test_walks_round_a_wall_it_discovers(self):
+        world = WallWorld(walls=[(18, -15, 20, 15)])  # a wall across the straight line
+        mover = Mover(world, calibrate(world), log=lambda *_: None)
+        world.x, world.y = 0.0, 0.0
+        mover.eyes = RayEyes(world)
+        self.assertTrue(mover.walk_to(40, 0, radius=2))
+        self.assertTrue(any(mover.terrain.is_blocked(mover.terrain.cell(19, y)) for y in range(-6, 7)))
+
+    def test_turns_smoothly(self):
+        world = WallWorld(walls=[])
+        mover = Mover(world, calibrate(world), log=lambda *_: None)
+        world.moves.clear()
+        mover.turn(180)
+        self.assertGreater(len(world.moves), 10)  # many small moves...
+        self.assertLess(max(world.moves), 0.1 * sum(world.moves))  # ...none of them a jump
 
     def fight(self, size, hurt):
         from defense import defend

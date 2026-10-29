@@ -95,8 +95,8 @@ class Menus:
 
     def click_at(self, x: float, y: float, double: bool = False) -> None:
         self.raw.check()
-        inputs.move_to(x, y)
-        self.raw.wait(0.1)
+        inputs.glide_to(x, y)
+        self.raw.wait(0.08)
         if double:
             inputs.double_click()
         else:

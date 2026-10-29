@@ -18,6 +18,7 @@ NODES_REFRESH_S = 30
 
 HEALTH_CHECK_S = 0.5
 CLOSE_THREAT = 0.18  # a creature this big on screen (share of its height) is too close to ignore
+FALL_Z = 2.0  # metres lost in height since the last look: health lost then comes from a fall
 
 
 class Stopped(Exception):
@@ -48,6 +49,7 @@ class RealGame:
         self.last_hurt: tuple[float, float] | None = None  # where the player was last hurt
         self.eyes = None  # perception.Eyes, when the AI can see
         self.ignore_sightings_until = 0.0  # after meeting a harmless creature, don't stop for it again
+        self._last_z: float | None = None
         self._watch_stop_key()
 
     def _watch_stop_key(self) -> None:
@@ -83,7 +85,10 @@ class RealGame:
         player = read_player()
         self._health_at = time.perf_counter()
         hurt = self.hp is not None and player.hp < self.hp - 0.5
-        self.hp = player.hp
+        fell = self._last_z is not None and self._last_z - player.z > FALL_Z
+        self.hp, self._last_z = player.hp, player.z
+        if hurt and fell:
+            hurt = False  # fall damage: no creature to fight, the walk notes the edge itself
         if player.dead or player.hp <= 0:
             self.release_all()
             raise Died()
@@ -119,8 +124,8 @@ class RealGame:
 
     def click_at(self, x: float, y: float) -> None:
         self.check()
-        inputs.move_to(x, y)
-        time.sleep(0.08)
+        inputs.glide_to(x, y)
+        time.sleep(0.05)
         inputs.click()
 
     def now(self) -> float:

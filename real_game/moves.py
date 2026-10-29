@@ -21,10 +21,19 @@ from game_state import Node, PlayerView
 
 CALIBRATION_FILE = Path(__file__).resolve().parent / "calibration.json"
 WALK_PITCH = 5  # degrees below the horizon while walking: the eyes need to see what is ahead
-FRESH_VIEW_S = 1.5  # a view older than this is not used to steer
-STEP_S = 0.15  # how often the walk is corrected
+FRESH_VIEW_S = 1.5  # a view older than this is not used
+MOUSE_TICK = 0.012  # seconds between two small mouse moves
+TURN_SPEED = 300.0  # degrees per second, turning on the spot
+STEER_SPEED = 150.0  # degrees per second at most, correcting the course while walking
+WAYPOINT_REACHED = 2.5  # metres
+STUCK_S, STUCK_MOVE = 1.2, 0.4  # moved less than this (m) in this time (s): stuck
+NO_PROGRESS_S = 25.0  # no closer to the goal for this long: give up
+FALL_DROP = 3.0  # metres lost in height between two looks: a fall
+BLOCK_NOW = 2  # stuck or fell there: blocked at once
+TRUST_SIGHT = 12.0  # metres: obstacles seen farther than this are not put on the map
+DROP_AHEAD = 4.0  # metres: where a drop seen ahead is put on the map
+STEP_S = 0.12  # how often the walk is corrected
 MINE_RADIUS = 2.5  # metres from the node's centre where we stop to mine
-DANGER_RADIUS = 50.0  # metres around a place where the player was attacked
 EYE_HEIGHT = 1.7  # metres
 AIM_PITCHES = (15, 25, 35, 45, 55, 65)  # degrees below the horizon tried to find the node
 TAP_S, LONG_PRESS_S = 0.1, 1.5
@@ -117,93 +126,166 @@ def calibrate(raw, counts: int = 400) -> Calibration:
 class Mover:
     """The player's body: turns, walks and mines, checking the result through the mod."""
 
-    def __init__(self, raw, calibration: Calibration, log=print, dangers: list | None = None, eyes=None):
+    def __init__(self, raw, calibration: Calibration, log=print, terrain=None, eyes=None):
+        from navigation import TerrainMap
+
         self.raw = raw
         self.cal = calibration
         self.log = log
-        self.eyes = eyes  # perception.Eyes: to see obstacles while walking
-        self.dangers = dangers if dangers is not None else []  # [x, y] where the player was attacked
+        self.eyes = eyes  # perception.Eyes: to see obstacles and drops while walking
+        self.terrain = terrain if terrain is not None else TerrainMap()  # learnt map of the ground
+        self.pitch: float | None = None  # degrees looked down, once known
+        self.avoid: dict[tuple[int, int], float] = {}  # nodes to leave alone until a given time
+        self.current_node: Node | None = None
+        self._seen_at = 0.0
 
     def facing(self, player: PlayerView | None = None) -> float:
         return self.cal.facing((player or self.raw.player()).yaw)
 
-    def turn(self, degrees: float) -> None:
-        """Turn right by `degrees` (left if negative), in small mouse moves like a hand would."""
-        counts = round(degrees / self.cal.facing_per_count)
-        while counts:
-            part = max(-150, min(150, counts))
-            self.raw.mouse(part, 0)
-            counts -= part
-            self.raw.wait(0.01)
+    # Hand on the mouse -------------------------------------------------------------
+
+    def _glide(self, dx_counts: float, dy_counts: float, seconds: float) -> None:
+        """Move the mouse smoothly: speed up, then slow down, like a hand would."""
+        steps = max(1, int(seconds / MOUSE_TICK))
+        sent_x = sent_y = 0
+        for k in range(1, steps + 1):
+            t = k / steps
+            eased = t * t * (3 - 2 * t)
+            x, y = round(dx_counts * eased), round(dy_counts * eased)
+            if (x, y) != (sent_x, sent_y):
+                self.raw.mouse(x - sent_x, y - sent_y)
+                sent_x, sent_y = x, y
+            self.raw.wait(MOUSE_TICK)
+
+    def turn(self, degrees: float, speed: float = TURN_SPEED) -> None:
+        """Turn right by `degrees` (left if negative), smoothly."""
+        if abs(degrees) < 0.3:
+            return
+        self._glide(degrees / self.cal.facing_per_count, 0, max(0.08, 1.3 * abs(degrees) / speed))
+
+    def tilt(self, degrees_down: float, speed: float = TURN_SPEED) -> None:
+        """Look further down by `degrees_down` (up if negative), smoothly."""
+        if self.pitch is not None:
+            degrees_down = max(-85 - self.pitch, min(85 - self.pitch, degrees_down))
+        if abs(degrees_down) < 0.3:
+            return
+        self._glide(0, degrees_down / self.cal.pitch_per_count, max(0.08, 1.3 * abs(degrees_down) / speed))
+        if self.pitch is not None:
+            self.pitch += degrees_down
 
     def set_pitch(self, degrees_down: float) -> None:
-        """Look `degrees_down` below the horizon: look all the way up first, then down."""
-        up = round(120 / self.cal.pitch_per_count)
-        self.raw.mouse(0, -up)
-        self.raw.wait(0.05)
-        self.raw.mouse(0, round((89 + degrees_down) / self.cal.pitch_per_count))
-        self.raw.wait(0.1)
+        """Look `degrees_down` below the horizon. The first time, the view is levelled once
+        (all the way up, the game stops it there); after that every change is a smooth move."""
+        if self.pitch is None:
+            self.raw.mouse(0, -round(120 / self.cal.pitch_per_count))
+            self.raw.wait(0.05)
+            self.pitch = -89.0
+        self.tilt(degrees_down - self.pitch)
 
     def face(self, x: float, y: float) -> None:
         player = self.raw.player()
         self.turn(wrap(heading(player.x, player.y, x, y) - self.facing(player)))
-        self.raw.wait(0.2)
+        self.raw.wait(0.1)
+
+    # Walking ---------------------------------------------------------------------------
 
     def walk_to(self, x: float, y: float, radius: float = 2.0, timeout: float | None = None) -> bool:
-        """Walk until within `radius` metres of (x, y) on the map. Returns False if it can't."""
+        """Walk to (x, y) along a path worked out on the learnt map, avoiding what is seen
+        in the way and learning where the ground can't be crossed. False if it can't get there."""
         player = self.raw.player()
+        goal = (x, y)
         distance = math.hypot(x - player.x, y - player.y)
-        timeout = timeout or 15 + 3 * distance / self.cal.walk_speed
-        start = self.raw.now()
+        timeout = timeout or 30 + 4 * distance / self.cal.walk_speed
+        start = best_at = self.raw.now()
+        best = distance
+        path = self._plan(player, goal)
         forward = False
-        check_at, check_pos, unstick = start + 1.5, (player.x, player.y), 0
+        check_at, check_pos, unstick = start + STUCK_S, (player.x, player.y), 0
+        last_z = player.z
         if self.eyes is not None:
             self.set_pitch(WALK_PITCH)
         try:
             while self.raw.now() - start < timeout:
                 player = self.raw.player()
+                now = self.raw.now()
                 distance = math.hypot(x - player.x, y - player.y)
                 if distance <= radius:
                     return True
-                delta = self.steer(wrap(heading(player.x, player.y, x, y) - self.facing(player)))
-                if abs(delta) > 35:  # far off course: stop and turn on the spot
+                self.terrain.mark_free(player.x, player.y)
+                if last_z - player.z > FALL_DROP:
+                    self.log("  chute : je retiens ce bord")
+                    self.terrain.mark_blocked(check_pos[0], check_pos[1], strength=BLOCK_NOW)
+                last_z = player.z
+                if self._learn_from_eyes(player) and not self.terrain.path_is_clear(path[:2]):
+                    path = self._plan(player, goal)
+                if distance < best - 1.0:
+                    best, best_at = distance, now
+                elif now - best_at > NO_PROGRESS_S:
+                    self.log("  je n'avance plus vers le but")
+                    return False
+                while len(path) > 1 and math.hypot(path[0][0] - player.x, path[0][1] - player.y) < WAYPOINT_REACHED:
+                    path.pop(0)
+                delta = wrap(heading(player.x, player.y, *path[0]) - self.facing(player))
+                if abs(delta) > 70:  # far off course: stop and turn on the spot
                     if forward:
                         self.raw.release(KEYS["forward"])
                         forward = False
                     self.turn(delta)
-                    self.raw.wait(0.2)
-                    check_at, check_pos = self.raw.now() + 1.5, (player.x, player.y)
+                    check_at, check_pos = self.raw.now() + STUCK_S, (player.x, player.y)
                     continue
-                if abs(delta) > 3:
-                    self.turn(delta)
+                correction = max(-STEER_SPEED * STEP_S, min(STEER_SPEED * STEP_S, delta))
                 if not forward:
                     self.raw.hold(KEYS["forward"])
                     forward = True
-                self.raw.wait(STEP_S)
+                if abs(correction) > 1:
+                    self.turn(correction, speed=2 * STEER_SPEED)  # steer while walking
+                else:
+                    self.raw.wait(STEP_S)
                 if self.raw.now() >= check_at:
                     moved = math.hypot(player.x - check_pos[0], player.y - check_pos[1])
-                    if moved < 0.5:  # stuck against something
+                    if moved < STUCK_MOVE:  # stuck against something: it goes on the map
                         unstick += 1
+                        ahead = math.radians(self.facing(player))
+                        self.terrain.mark_blocked(player.x + 1.5 * math.cos(ahead), player.y + 1.5 * math.sin(ahead),
+                                                  strength=BLOCK_NOW)
                         self._unstick(unstick)
-                    check_at, check_pos = self.raw.now() + 1.5, (player.x, player.y)
+                        path = self._plan(self.raw.player(), goal)
+                    check_at, check_pos = self.raw.now() + STUCK_S, (player.x, player.y)
             return False
         finally:
             if forward:
                 self.raw.release(KEYS["forward"])
 
-    def steer(self, delta: float) -> float:
-        """Direction to walk, given the target's: around what the eyes see in the way."""
+    def _plan(self, player: PlayerView, goal: tuple[float, float]) -> list[tuple[float, float]]:
+        path = self.terrain.plan((player.x, player.y), goal)
+        return path if path else [goal]  # no known way: head straight and learn on the way
+
+    def _learn_from_eyes(self, player: PlayerView) -> bool:
+        """Put on the map what the eyes see in the way. True if the map changed."""
+        from perception import ground_distance
+
         view = self.eyes.latest if self.eyes is not None else None
-        if view is None or not view.clearance or self.raw.now() - view.taken_at > FRESH_VIEW_S:
-            return delta
-        if abs(delta) > view.fov / 2 - 5 or view.is_open(delta):
-            return delta  # target out of sight (turn first), or the way is clear
-        best = view.best_direction(delta)
-        if best is not None:
-            return best
-        half = len(view.clearance) // 2
-        left, right = sum(view.clearance[:half]), sum(view.clearance[-half:])
-        return delta + (60 if right >= left else -60)  # everything blocked: turn to the more open side
+        if view is None or not view.obstacle_rows or view.taken_at <= self._seen_at:
+            return False
+        if self.raw.now() - view.taken_at > FRESH_VIEW_S:
+            return False
+        self._seen_at = view.taken_at
+        facing = self.facing(player)
+        pitch = self.pitch if self.pitch is not None else WALK_PITCH
+        changed = False
+        for i, row in enumerate(view.obstacle_rows):
+            direction = math.radians(facing + view.column_bearing(i))
+            spots = []
+            if row is not None:
+                distance = ground_distance(row, pitch, view.fov, view.aspect)
+                if distance <= TRUST_SIGHT:
+                    spots.append(distance)
+            if i < len(view.drops) and view.drops[i]:
+                spots.append(DROP_AHEAD)
+            for distance in spots:
+                changed |= self.terrain.mark_blocked(player.x + distance * math.cos(direction),
+                                                     player.y + distance * math.sin(direction))
+        return changed
 
     def _unstick(self, attempt: int) -> None:
         """Jump; after a few tries, also step sideways."""
@@ -216,6 +298,11 @@ class Mover:
             self.raw.hold(side)
             self.raw.wait(0.8)
             self.raw.release(side)
+
+    def avoid_node(self, node: Node | None, seconds: float = 900) -> None:
+        """Leave a node alone for a while (dangerous or out of reach)."""
+        if node is not None:
+            self.avoid[(round(node.x), round(node.y))] = self.raw.now() + seconds
 
     def _press_interact(self, seconds: float) -> None:
         self.raw.hold(KEYS["interact"])
@@ -231,16 +318,18 @@ class Mover:
         free = [n for n in self.raw.nodes() if n.resource == resource and not n.exploited]
         if not free:
             raise SkillError("aucun gisement libre de ce type n'est connu")
-        safe = [n for n in free if all(math.hypot(n.x - x, n.y - y) > DANGER_RADIUS for x, y in self.dangers)]
-        if safe:
-            free = safe
-        else:
+        now = self.raw.now()
+        usable = [n for n in free if self.avoid.get((round(n.x), round(n.y)), 0) < now] or free
+        safe = [n for n in usable if self.terrain.danger_near(n.x, n.y) == 0]
+        if not safe:
             self.log("  tous les gisements connus sont près d'un danger : je prends le plus proche")
-        node = min(free, key=lambda n: math.hypot(n.x - player.x, n.y - player.y))
+        node = min(safe or usable, key=lambda n: math.hypot(n.x - player.x, n.y - player.y))
+        self.current_node = node
         far = math.hypot(node.x - player.x, node.y - player.y)
         self.log(f"  gisement {node.purity} à {far:.0f} m")
         if not self.walk_to(node.x, node.y, radius=MINE_RADIUS):
-            raise SkillError("je n'arrive pas à atteindre le gisement")
+            self.avoid_node(node)
+            raise SkillError("je n'arrive pas à atteindre le gisement : j'en choisirai un autre")
         return node
 
     def mine_by_hand(self, resource: str, amount: int, timeout: float = 240) -> int:

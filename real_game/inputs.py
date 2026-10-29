@@ -156,3 +156,19 @@ def double_click(button: str = "left") -> None:
     click(button)
     time.sleep(0.08)
     click(button)
+
+
+class POINT(ctypes.Structure):
+    _fields_ = [("x", wintypes.LONG), ("y", wintypes.LONG)]
+
+
+def glide_to(x: float, y: float, seconds: float = 0.18) -> None:
+    """Move the cursor to (x, y) smoothly, speeding up then slowing down, like a hand."""
+    here = POINT()
+    user32.GetCursorPos(ctypes.byref(here))
+    steps = max(2, int(seconds / 0.012))
+    for k in range(1, steps + 1):
+        t = k / steps
+        eased = t * t * (3 - 2 * t)
+        user32.SetCursorPos(int(here.x + (x - here.x) * eased), int(here.y + (y - here.y) * eased))
+        time.sleep(seconds / steps)

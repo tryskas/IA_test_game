@@ -8,12 +8,15 @@ from moves import Mover, SkillError
 STRIKE_SIZE = 0.22  # a creature this big on screen is within reach of the Xeno-Zapper
 POINT_BLANK = 0.35  # this big: about to hit, strike whatever it is
 APPROACHING = 1.2  # grown this much in about a second: it is coming at us
-FLEE_HP = 35  # below this health, stop fighting and run
+FIGHT_CONFIDENCE = 0.08  # during a fight, even a doubtful shape is worth facing
+FLEE_HP = 25  # below this health while still being hit: run
 FIGHT_S = 45  # longest fight before running away
 CALM_S = 4  # no damage for this long: whatever is around is not a danger
 HURT_MEMORY_S = 5  # still fighting back this long after the last hit
 IGNORE_HARMLESS_S = 20  # don't stop again for a harmless creature during this time
 FLEE_S = 8
+REST_BELOW = 60  # after a fight, rest at the HUB below this health...
+REST_UNTIL = 90  # ...until this much, as long as it keeps coming back
 RESPAWN_WORDS = ("Réapparaître", "Réapparition", "Respawn", "Revivre")
 
 
@@ -21,14 +24,19 @@ def defend(game, mover: Mover, eyes, home: tuple[float, float] | None, hurt: boo
     """Deal with a creature or an attack. Returns "safe", "harmless" or "fled".
 
     Not every creature is hostile: strike only when losing health, when the
-    creature rushes at the player, or when it is right in front.
+    creature rushes at the player, or when it is right in front. Fight first;
+    run only when health is low and the hits keep coming.
     """
     game.alarms = False  # the fight itself must not be interrupted by the alarm
+    confidence = eyes.confidence if eyes else None
+    if eyes:
+        eyes.confidence = FIGHT_CONFIDENCE
     try:
         start = calm_since = game.now()
         hurt_at = start if hurt else -1e9
         last_hp = game.player().hp
         sizes: list[tuple[float, float]] = []  # (time, size) of the creature watched
+        looks = 0
         mover.set_pitch(5)
         while game.now() - start < FIGHT_S:
             now = game.now()
@@ -36,7 +44,7 @@ def defend(game, mover: Mover, eyes, home: tuple[float, float] | None, hurt: boo
             if player.hp < last_hp - 0.5:
                 hurt_at = calm_since = now
             last_hp = player.hp
-            if player.hp < FLEE_HP:
+            if player.hp < FLEE_HP and now - hurt_at < 3:
                 flee(game, mover, home, log)
                 return "fled"
             view = eyes.fresh(now - 0.1, timeout=2.0) if eyes else None
@@ -45,16 +53,17 @@ def defend(game, mover: Mover, eyes, home: tuple[float, float] | None, hurt: boo
             if threat is None:
                 if quiet and now - calm_since > CALM_S:
                     return "safe"
-                mover.turn(90)  # hit by something unseen: look around
-                game.wait(0.3)
+                mover.turn(180 if looks % 3 == 0 else 90)  # attackers often come from behind
+                looks += 1
+                game.wait(0.25)
                 continue
             sizes = [(t, s) for t, s in sizes if now - t < 1.5] + [(now, threat.size)]
             approaching = threat.size > APPROACHING * sizes[0][1] and now - sizes[0][0] > 0.5
             if quiet and not approaching and now - start > CALM_S:
                 game.ignore_sightings_until = now + IGNORE_HARMLESS_S
                 return "harmless"
-            mover.turn(threat.bearing)
-            game.mouse(0, round(threat.below / mover.cal.pitch_per_count))
+            mover.turn(threat.bearing, speed=400)
+            mover.tilt(threat.below, speed=400)
             hostile = now - hurt_at < HURT_MEMORY_S or approaching or threat.size >= POINT_BLANK
             if hostile and threat.size >= STRIKE_SIZE:
                 log(f"  je frappe ({threat.label})")
@@ -62,11 +71,29 @@ def defend(game, mover: Mover, eyes, home: tuple[float, float] | None, hurt: boo
                     game.click()
                     game.wait(0.25)
             else:
-                game.wait(0.2)  # watch it
+                game.wait(0.15)  # watch it
         flee(game, mover, home, log)
         return "fled"
     finally:
         game.alarms = True
+        if eyes:
+            eyes.confidence = confidence
+
+
+def recover(game, mover: Mover, home: tuple[float, float] | None, log=print) -> None:
+    """Low on health: go back to the HUB and wait while health comes back."""
+    if game.player().hp >= REST_BELOW:
+        return
+    log("  peu de vie : je rentre me reposer au HUB")
+    if home is not None:
+        mover.walk_to(*home, radius=5.0)
+    last, still = game.player().hp, 0.0
+    while last < REST_UNTIL and still < 15:
+        game.wait(1.5)
+        hp = game.player().hp
+        still = 0.0 if hp > last else still + 1.5
+        last = hp
+    log(f"  vie : {last:.0f}")
 
 
 def flee(game, mover: Mover, home: tuple[float, float] | None, log=print) -> None:
@@ -75,7 +102,7 @@ def flee(game, mover: Mover, home: tuple[float, float] | None, log=print) -> Non
     if home is not None:
         mover.face(*home)
     else:
-        mover.turn(180)
+        mover.turn(180, speed=500)
     mover.set_pitch(5)
     game.hold(KEYS["sprint"])
     game.hold(KEYS["forward"])

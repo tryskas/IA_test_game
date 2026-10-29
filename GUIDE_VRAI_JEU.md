@@ -263,6 +263,12 @@ L'IA analyse l'image du jeu en continu, quelques fois par seconde :
 - **obstacles** : un modèle de profondeur (Depth Anything V2) estime la distance de chaque point de l'image. Chaque direction devant elle est classée dégagée ou bloquée, et elle contourne ce qui est dans le chemin ;
 - **secours** : si sa vie baisse sans qu'elle ait rien vu, elle s'arrête, se retourne pour chercher l'attaquant, ou fuit. Après une mort, elle clique sur le bouton de réapparition et reprend son plan. Elle retient les endroits où elle a été attaquée et évite ensuite les gisements à moins de 50 m.
 
+**Carte apprise et chemins** : ce que l'IA voit dans le chemin (rochers, falaises, à-pics), les endroits où elle reste bloquée ou tombe, et ceux où elle est attaquée sont notés sur une carte du terrain, gardée dans `real_game/memory.json`. Pour aller quelque part, elle calcule un chemin sur cette carte (algorithme A*) qui contourne les obstacles connus et s'écarte des zones dangereuses. Elle le recalcule dès qu'elle découvre un nouvel obstacle. Après deux attaques sur le chemin d'un même gisement, ou si elle n'arrive pas à l'atteindre, elle en choisit un autre.
+
+**Gestes naturels** : la caméra tourne progressivement (elle accélère puis ralentit), la trajectoire est corrigée en marchant, l'inclinaison du regard est suivie et changée en douceur, et le curseur glisse dans les menus.
+
+**Combat** : l'IA se retourne d'abord (les attaques viennent souvent de derrière), fait face et frappe. Elle ne fuit que si sa vie passe sous 25 % pendant qu'elle est encore touchée. Une chute n'est pas prise pour une attaque. Après un combat, si sa vie est sous 60 %, elle rentre au HUB et attend qu'elle remonte.
+
 Vérifie d'abord le **champ de vision** du jeu (Options > Vidéo) et reporte-le dans `real_game/config.py` (`FOV`, 90 par défaut). Il sert à transformer la position d'une créature à l'écran en angle.
 
 Pour voir ce que l'IA voit, sans qu'elle touche aux commandes, lance :

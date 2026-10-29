@@ -13,6 +13,7 @@ from __future__ import annotations
 import math
 import threading
 import time
+import warnings
 from dataclasses import dataclass
 
 import numpy as np
@@ -28,6 +29,7 @@ HORIZON_BAND = (0.30, 0.62)  # rows (fractions of the height) where something in
 GROUND_BAND = (0.62, 0.84)  # rows that show the ground in front in nearly every view (above the HUD)
 SKY_BAND = (0.0, 0.15)
 GROUND_PERCENTILE = 20  # the ground is found among the farthest points of each row
+DROP = 0.45  # ground this much farther than expected (share of its nearness): a drop
 BLOCKED = 0.35  # sticking out of the ground by this share of the ground's depth range: in the way
 # Parts of the screen where the player's own hand, tool and HUD are: never creatures.
 NOT_THE_WORLD = ((0.55, 0.55, 1.0, 1.0), (0.0, 0.85, 1.0, 1.0))
@@ -45,13 +47,21 @@ def vertical_of(y: float, height: float, width: float, fov: float) -> float:
     return math.degrees(math.atan((y - height / 2) / focal))
 
 
-def clearance_from_depth(depth: np.ndarray, columns: int = COLUMNS) -> tuple[float, ...]:
-    """How open each column is: 1 = clear, 0.5 = at the limit, 0 = something right in front.
+@dataclass(frozen=True)
+class DepthReading:
+    clearance: tuple[float, ...]  # per column: 1 = clear, 0.5 = at the limit, 0 = right in front
+    obstacle_rows: tuple[float | None, ...]  # per column: where the obstacle meets the ground (row fraction)
+    drops: tuple[bool, ...]  # per column: the ground falls away (cliff edge, hole, water)
+
+
+def read_depth(depth: np.ndarray, columns: int = COLUMNS) -> DepthReading:
+    """What a depth picture says about the way ahead.
 
     The bottom of the view is nearly always ground: how its nearness grows from row
     to row gives a model of the ground, whatever the camera's tilt. What sticks out
-    of that ground (a rock, a trunk, a wall) is in the way. Depth models give a
-    relative scale, sometimes « bigger is nearer », sometimes the opposite: both work.
+    of that ground (a rock, a trunk, a wall) is in the way; ground much farther than
+    the model expects is a drop. Depth models give a relative scale, sometimes
+    « bigger is nearer », sometimes the opposite: both work.
     """
     height, width = depth.shape
     fractions = (np.arange(height) + 0.5) / height
@@ -72,13 +82,36 @@ def clearance_from_depth(depth: np.ndarray, columns: int = COLUMNS) -> tuple[flo
     expected = np.maximum(slope * fractions + offset, far)  # the ground's nearness, row by row
     unit = slope * (GROUND_BAND[1] - HORIZON_BAND[0])  # the ground's nearness range in view
     band = rows(HORIZON_BAND)
+    band_rows = fractions[band]
     sticking_out = (depth[band] - expected[band][:, None]) / unit
-    open_share = []
-    for i in range(columns):
-        part = sticking_out[:, int(i * width / columns):int((i + 1) * width / columns)]
-        score = float(np.nanpercentile(part, 80))
-        open_share.append(min(1.0, max(0.0, 1 - 0.5 * score / BLOCKED)))
-    return tuple(open_share)
+    clearance, obstacle_rows, drops = [], [], []
+    with np.errstate(all="ignore"), warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)  # columns hidden by the hand have no data
+        for i in range(columns):
+            cols = slice(int(i * width / columns), int((i + 1) * width / columns))
+            part = sticking_out[:, cols]
+            score = float(np.nanpercentile(part, 80))
+            clearance.append(min(1.0, max(0.0, 1 - 0.5 * score / BLOCKED)))
+            hits = np.where(np.nanmax(part, axis=1) > BLOCKED)[0]
+            obstacle_rows.append(float(band_rows[hits.max()]) if len(hits) and score > BLOCKED else None)
+            seen = np.nanmedian(depth[ground][:, cols])
+            wanted = float(np.median(expected[ground]))
+            drops.append(bool(np.isfinite(seen) and seen < DROP * wanted))
+    return DepthReading(tuple(clearance), tuple(obstacle_rows), tuple(drops))
+
+
+def clearance_from_depth(depth: np.ndarray, columns: int = COLUMNS) -> tuple[float, ...]:
+    """How open each column is: 1 = clear, 0.5 = at the limit, 0 = something right in front."""
+    return read_depth(depth, columns).clearance
+
+
+def ground_distance(row: float, pitch: float, fov: float, aspect: float, eye_height: float = 1.7,
+                    farthest: float = 15.0) -> float:
+    """Metres to the ground seen at a row (fraction of the height), looking `pitch` degrees down."""
+    below = pitch + vertical_of(row * aspect, aspect, 1.0, fov)
+    if below <= 1:
+        return farthest
+    return min(farthest, eye_height / math.tan(math.radians(below)))
 
 
 @dataclass(frozen=True)
@@ -97,6 +130,9 @@ class View:
     threats: tuple[Threat, ...]
     clearance: tuple[float, ...]  # one value per column, left to right (empty: no depth)
     fov: float
+    obstacle_rows: tuple[float | None, ...] = ()  # where each column's obstacle meets the ground
+    drops: tuple[bool, ...] = ()  # columns where the ground falls away
+    aspect: float = 9 / 16  # height / width of the image analysed
 
     def column_bearing(self, index: int) -> float:
         width = len(self.clearance)
@@ -139,6 +175,7 @@ class Eyes:
         self.latest: View | None = None
         self.latest_image: np.ndarray | None = None
         self.last_depth: np.ndarray | None = None
+        self.confidence = DETECT_CONFIDENCE  # lowered during a fight: a doubtful shape nearby is worth a look
         self._want = (creatures, depth)
         self._detector = self._depth = None
         self._running = False
@@ -172,21 +209,22 @@ class Eyes:
         height, width = small.shape[:2]
         threats: tuple[Threat, ...] = ()
         if self._detector is not None:
-            result = self._detector.predict(small, imgsz=DETECT_SIZE, conf=DETECT_CONFIDENCE, verbose=False)[0]
+            result = self._detector.predict(small, imgsz=DETECT_SIZE, conf=self.confidence, verbose=False)[0]
             boxes = [
                 (*xyxy, score, CREATURE_WORDS[int(cls)])
                 for xyxy, score, cls in zip(result.boxes.xyxy.tolist(), result.boxes.conf.tolist(),
                                             result.boxes.cls.tolist())
             ]
             threats = threats_from_boxes(boxes, width, height, self.fov)
-        clearance: tuple[float, ...] = ()
+        reading = DepthReading((), (), ())
         if self._depth is not None:
             from PIL import Image
 
             depth = self._depth(Image.fromarray(small[:, :, ::-1]))["predicted_depth"]
             self.last_depth = np.asarray(depth.squeeze().cpu().numpy(), dtype=np.float32)
-            clearance = clearance_from_depth(self.last_depth)
-        return View(taken_at, threats, clearance, self.fov)
+            reading = read_depth(self.last_depth)
+        return View(taken_at, threats, reading.clearance, self.fov, reading.obstacle_rows, reading.drops,
+                    height / width)
 
     def _watch(self) -> None:
         import mss

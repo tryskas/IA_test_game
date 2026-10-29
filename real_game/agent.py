@@ -26,7 +26,7 @@ import urllib.error
 
 from common import find_game_window
 from config import FOV
-from defense import defend, respawn
+from defense import defend, recover, respawn
 from game_io import Died, RealGame, Stopped, UnderAttack
 from game_state import ROOT, fetch, read_player
 from menus import Memory, Menus
@@ -139,34 +139,48 @@ def do(step: Step, game: RealGame, mover: Mover, menus: Menus) -> None:
         game.wait(WAIT_S)
 
 
-def remember_danger(game: RealGame, memory: Memory) -> None:
-    """Note where the player got hurt, to mine elsewhere next time."""
-    spot = game.last_hurt
-    if spot is None:
-        player = read_player()
-        spot = (player.x, player.y)
-    memory.data.setdefault("dangers", []).append([round(spot[0], 1), round(spot[1], 1)])
+ATTACKS_BEFORE_GIVING_UP = 2  # attacks on the way to the same node before choosing another
+
+
+def save_map(mover: Mover, memory: Memory) -> None:
+    memory.data["terrain"] = mover.terrain.to_data()
     memory.save()
 
 
-def survive(alarm: Exception, game: RealGame, mover: Mover, menus: Menus, memory: Memory) -> None:
-    """React to an attack or a death, then let the plan carry on."""
-    remember_danger(game, memory)
+def home() -> tuple[float, float] | None:
+    hub = terminal()
+    return (hub["location"]["x"] / 100, hub["location"]["y"] / 100) if hub else None
+
+
+def survive(alarm: Exception, game: RealGame, mover: Mover, menus: Menus, memory: Memory,
+            attacks: dict) -> None:
+    """React to an attack or a death, learn from it, then let the plan carry on."""
+    spot = game.last_hurt or (lambda p: (p.x, p.y))(read_player())
+    mover.terrain.mark_danger(*spot)
+    node = mover.current_node
+    if node is not None:
+        key = (round(node.x), round(node.y))
+        attacks[key] = attacks.get(key, 0) + 1
+        if attacks[key] >= ATTACKS_BEFORE_GIVING_UP:
+            print("  trop dangereux par là : je choisirai un autre gisement")
+            mover.avoid_node(node)
+    save_map(mover, memory)
     if isinstance(alarm, Died):
         print(f"[{stamp()}] Mort : je réapparais (l'inventaire est resté sur place)")
         respawn(game, menus.screen)
+        mover.pitch = None  # the view was reset
         return
     print(f"[{stamp()}] Danger : {alarm}")
-    hub = terminal()
-    home = (hub["location"]["x"] / 100, hub["location"]["y"] / 100) if hub else None
-    outcome = defend(game, mover, game.eyes, home, hurt=getattr(alarm, "hurt", True))
+    outcome = defend(game, mover, game.eyes, home(), hurt=getattr(alarm, "hurt", True))
     print({"safe": "  hors de danger", "harmless": "  créature inoffensive, je reprends",
            "fled": "  à l'abri"}[outcome])
+    recover(game, mover, home())
 
 
 def play(game: RealGame, mover: Mover, menus: Menus, memory: Memory) -> None:
     start_of_game(menus, memory)
     failures = 0
+    attacks: dict = {}
     while True:
         plan = read_plan()
         hub = terminal() or {}
@@ -181,15 +195,18 @@ def play(game: RealGame, mover: Mover, menus: Menus, memory: Memory) -> None:
             do(step, game, mover, menus)
             failures = 0
         except (UnderAttack, Died) as alarm:
-            try:
-                survive(alarm, game, mover, menus, memory)
-            except Died as again:
-                survive(again, game, mover, menus, memory)
+            for _ in range(3):  # a new alarm during the reaction is dealt with the same way
+                try:
+                    survive(alarm, game, mover, menus, memory, attacks)
+                    break
+                except (UnderAttack, Died) as again:
+                    alarm = again
         except SkillError as problem:
             failures += 1
             print(f"  échec : {problem}")
-            if failures >= 3:
-                raise SkillError(f"trois échecs de suite, j'arrête ({problem})")
+            if failures >= 4:
+                raise SkillError(f"quatre échecs de suite, j'arrête ({problem})")
+        save_map(mover, memory)
 
 
 def main() -> None:
@@ -236,7 +253,12 @@ def main() -> None:
             print(f"Calibrage enregistré : {cal}")
             return
         memory = Memory.load()
-        mover = Mover(game, Calibration.load(), dangers=memory.data.setdefault("dangers", []), eyes=eyes)
+        from navigation import TerrainMap
+
+        terrain = TerrainMap(memory.data.get("terrain"))
+        for spot in memory.data.pop("dangers", []):  # older memories kept dangers apart
+            terrain.mark_danger(*spot)
+        mover = Mover(game, Calibration.load(), terrain=terrain, eyes=eyes)
         menus = Menus(game, mover, Screen(window.left, window.top, window.width, window.height), memory)
         if args.commande == "jouer":
             play(game, mover, menus, memory)
