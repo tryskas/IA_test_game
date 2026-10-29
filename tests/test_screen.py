@@ -6,7 +6,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "real_game"))
 
-from menus import BUILD_TILES_BELOW, ZAPPER_OFFSET  # noqa: E402
+from menus import BUILD_TILES_BELOW, ZAPPER_OFFSET, building_position  # noqa: E402
 from screen import TextBox, best_match, hologram_state, normalize  # noqa: E402
 
 try:
@@ -54,6 +54,13 @@ class MatchingTest(unittest.TestCase):
         self.assertTrue(near(best_match(boxes, "Plaque de fer renforcée"), 616, 675, 20))
         self.assertIsNotNone(best_match(boxes, "Chercher une formule"))
         self.assertIsNone(best_match(boxes, "Lingot de fer"))  # not on screen (needs the search)
+
+    def test_building_stands_where_the_camera_looked_when_placed(self):
+        # Looking 45° down from 1.7 m up, the ground is 1.7 m ahead.
+        x, y = building_position({"x": 10.0, "y": 5.0, "facing": 90.0, "pitch": 45.0})
+        self.assertAlmostEqual(x, 10.0, places=3)
+        self.assertAlmostEqual(y, 6.7, places=3)
+        self.assertEqual(building_position({"building": [1.0, 2.0]}), (1.0, 2.0))
 
     def test_short_words_tolerate_one_misread_letter(self):
         rows = [TextBox("Vls", 538, 392, 50, 30, 0.6), TextBox("[ 228 ]", 810, 392, 60, 24, 0.9)]

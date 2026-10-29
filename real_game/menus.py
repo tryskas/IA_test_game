@@ -6,11 +6,12 @@ lists change as new recipes unlock. Every action is checked through the mod.
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Callable
 
 from config import KEYS
-from moves import Mover, SkillError, wrap
+from moves import EYE_HEIGHT, Mover, SkillError, wrap
 from screen import Screen, normalize
 
 try:
@@ -23,10 +24,22 @@ REFERENCE_WIDTH, REFERENCE_HEIGHT = 2560, 1440  # screen size the offsets below 
 ZAPPER_OFFSET = (61, 49)  # from the left of « Raccourcis d'équipement » to the first equipment slot
 BUILD_TILES_BELOW = 0.21  # build menu: results are under this height (fraction of the screen)
 PLACE_TURNS = (0, 45, -45, 90, -90, 135, -135, 180)  # directions tried to find room for a building
-PLACE_PITCHES = (15, 25, 35, 8)  # degrees below the horizon: near and far spots
+PLACE_PITCHES = (25, 20, 30, 15)  # degrees below the horizon: about 3 to 6 m ahead, near first
+USE_DISTANCES = (3.0, 2.2, 4.0)  # metres from a building's centre to stand when using it
+USE_PITCHES = (10, 20, 0, 30)  # degrees below the horizon to look at a building
 PLACE_MOVES = 3  # walks forward to look for room elsewhere
 CRAFT_BUTTON = (1198, 940)  # workbench « Fabriquer » button, on the reference screen
 FIRST_RECIPE = (600, 397)  # workbench: first recipe under the search field, on the reference screen
+
+
+def building_position(spot: dict) -> tuple[float, float]:
+    """Where a remembered building stands: given directly, or worked out from where
+    the camera looked when it was placed (older memories)."""
+    if "building" in spot:
+        return tuple(spot["building"])
+    distance = EYE_HEIGHT / math.tan(math.radians(spot["pitch"]))
+    facing = math.radians(spot["facing"])
+    return spot["x"] + distance * math.cos(facing), spot["y"] + distance * math.sin(facing)
 
 
 class Memory:
@@ -133,8 +146,8 @@ class Menus:
             self.press(KEYS["close"])  # leave build mode
         if spot:
             player = self.raw.player()
-            self.memory.spots[spot] = {"x": player.x, "y": player.y,
-                                       "facing": self.mover.facing(player), "pitch": pitch}
+            placed_at = {"x": player.x, "y": player.y, "facing": self.mover.facing(player), "pitch": pitch}
+            self.memory.spots[spot] = {"building": list(building_position(placed_at))}
             self.memory.save()
 
     def _place(self, done: Callable[[], bool]) -> float:
@@ -190,14 +203,16 @@ class Menus:
         spot = self.memory.spots.get("workbench")
         if spot is None:
             raise SkillError("je ne sais pas où est l'établi")
-        if not self.mover.walk_to(spot["x"], spot["y"], radius=1.0):
-            raise SkillError("je n'arrive pas à retourner à l'établi")
-        self.mover.turn(wrap(spot["facing"] - self.mover.facing()))
-        for pitch in (spot["pitch"], spot["pitch"] - 10, spot["pitch"] + 10, spot["pitch"] + 20, 5):
-            self.mover.set_pitch(pitch)
-            self.press(KEYS["interact"])
-            if self.screen.wait_for("Chercher une formule", "workbench", timeout=2.5):
-                return
+        x, y = building_position(spot)
+        for distance in USE_DISTANCES:  # come closer if it does not open
+            if not self.mover.walk_to(x, y, radius=distance):
+                raise SkillError("je n'arrive pas à aller jusqu'à l'établi")
+            self.mover.face(x, y)
+            for pitch in USE_PITCHES:
+                self.mover.set_pitch(pitch)
+                self.press(KEYS["interact"])
+                if self.screen.wait_for("Chercher une formule", "workbench", timeout=2.0):
+                    return
         raise SkillError("je n'arrive pas à ouvrir l'établi")
 
     def craft(self, recipe: str, product: str, count: int) -> int:
