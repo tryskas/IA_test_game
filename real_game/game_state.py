@@ -5,7 +5,7 @@ import json
 import math
 import sys
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
@@ -66,6 +66,7 @@ class PlayerView:
     yaw: float  # degrees, as the mod gives it
     inventory: dict[str, float]  # mini-game items carried
     other_items: dict[str, float]  # items the mini-game ignores, by in-game name
+    by_class: dict[str, float] = field(default_factory=dict)  # every item carried, by game class name
 
 
 @dataclass(frozen=True)
@@ -143,15 +144,18 @@ def parse_nodes(entries: list) -> tuple[Node, ...]:
 def parse_player(entry: dict) -> PlayerView:
     inventory: dict[str, float] = {}
     other: dict[str, float] = {}
+    by_class: dict[str, float] = {}
     for stack in entry.get("Inventory", []):
-        key = ITEM_CLASSES.get(stack.get("ClassName", ""))
+        cls = stack.get("ClassName", "")
+        by_class[cls] = by_class.get(cls, 0) + stack.get("Amount", 0)
+        key = ITEM_CLASSES.get(cls)
         if key is None:
             other[stack.get("Name", "?")] = other.get(stack.get("Name", "?"), 0) + stack.get("Amount", 0)
         else:
             inventory[key] = inventory.get(key, 0) + stack.get("Amount", 0)
     x, y, z = _location(entry) or (0.0, 0.0, 0.0)
     yaw = float((entry.get("location") or {}).get("rotation", 0.0))
-    return PlayerView(x, y, z, yaw, inventory, other)
+    return PlayerView(x, y, z, yaw, inventory, other, by_class)
 
 
 def read_player(get: Callable[[str], object] = fetch) -> PlayerView:

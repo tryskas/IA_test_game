@@ -1,0 +1,178 @@
+[
+ {
+  "text": "1,2,4,1 Cl#513085",
+  "x": 288,
+  "y": 28,
+  "w": 164,
+  "h": 28,
+  "confidence": 0.34
+ },
+ {
+  "text": "Frare",
+  "x": 2042,
+  "y": 34,
+  "w": 56,
+  "h": 24,
+  "confidence": 0.32
+ },
+ {
+  "text": "95 %",
+  "x": 2206,
+  "y": 46,
+  "w": 56,
+  "h": 24,
+  "confidence": 0.68
+ },
+ {
+  "text": "oror",
+  "x": 2038,
+  "y": 60,
+  "w": 52,
+  "h": 16,
+  "confidence": 0.44
+ },
+ {
+  "text": "Prccesseur 2136",
+  "x": 2330,
+  "y": 60,
+  "w": 160,
+  "h": 28,
+  "confidence": 0.57
+ },
+ {
+  "text": "LaT 25lms",
+  "x": 2484,
+  "y": 58,
+  "w": 116,
+  "h": 24,
+  "confidence": 0.13
+ },
+ {
+  "text": "Choisir une étape",
+  "x": 570,
+  "y": 102,
+  "w": 200,
+  "h": 36,
+  "confidence": 0.97
+ },
+ {
+  "text": "active",
+  "x": 862,
+  "y": 100,
+  "w": 72,
+  "h": 28,
+  "confidence": 1.0
+ },
+ {
+  "text": "Tascenseur",
+  "x": 2302,
+  "y": 112,
+  "w": 128,
+  "h": 28,
+  "confidence": 0.66
+ },
+ {
+  "text": "Paler",
+  "x": 688,
+  "y": 164,
+  "w": 68,
+  "h": 28,
+  "confidence": 0.28
+ },
+ {
+  "text": "alhen",
+  "x": 820,
+  "y": 170,
+  "w": 68,
+  "h": 24,
+  "confidence": 0.15
+ },
+ {
+  "text": "Palier",
+  "x": 950,
+  "y": 164,
+  "w": 64,
+  "h": 28,
+  "confidence": 1.0
+ },
+ {
+  "text": "Construction de base",
+  "x": 1044,
+  "y": 432,
+  "w": 220,
+  "h": 28,
+  "confidence": 0.82
+ },
+ {
+  "text": "Logistique",
+  "x": 1280,
+  "y": 434,
+  "w": 108,
+  "h": 32,
+  "confidence": 0.98
+ },
+ {
+  "text": "Etude sur le terrain",
+  "x": 1518,
+  "y": 432,
+  "w": 200,
+  "h": 28,
+  "confidence": 0.63
+ },
+ {
+  "text": "REMARQUE",
+  "x": 1838,
+  "y": 634,
+  "w": 184,
+  "h": 40,
+  "confidence": 1.0
+ },
+ {
+  "text": "Veuillez sélectionner",
+  "x": 1848,
+  "y": 678,
+  "w": 316,
+  "h": 40,
+  "confidence": 0.87
+ },
+ {
+  "text": "une étape",
+  "x": 1848,
+  "y": 728,
+  "w": 156,
+  "h": 36,
+  "confidence": 0.71
+ },
+ {
+  "text": "Choistr une étape",
+  "x": 1306,
+  "y": 1180,
+  "w": 300,
+  "h": 48,
+  "confidence": 0.75
+ },
+ {
+  "text": "Etape ",
+  "x": 795,
+  "y": 100,
+  "w": 78,
+  "h": 43,
+  "confidence": 0.62
+ },
+ {
+  "text": "orbital",
+  "x": 2401,
+  "y": 98,
+  "w": 88,
+  "h": 42,
+  "confidence": 0.72
+ },
+ {
+  "text": "onstrulre",
+  "x": 2189,
+  "y": 120,
+  "w": 105,
+  "h": 33,
+  "confidence": 0.99
+ }
+]

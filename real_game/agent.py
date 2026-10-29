@@ -1,7 +1,7 @@
 """The AI plays the real game.
 
     python real_game/agent.py calibrer                  # once: measure the mouse and the walk (~15 m of flat ground)
-    python real_game/agent.py jouer                     # the AI plays, from the very start of a game
+    python real_game/agent.py jouer                     # the AI plays: HUB milestones one after the other
 
 Single skills, to test them one by one:
     python real_game/agent.py equiper                   # equip the Xeno-Zapper (start of the tutorial)
@@ -9,10 +9,11 @@ Single skills, to test them one by one:
     python real_game/agent.py aller fer                 # walk to the nearest free iron node
     python real_game/agent.py miner fer 10              # mine 10 iron ore by hand (also: cuivre, calcaire)
     python real_game/agent.py fabriquer "Barre de fer" 5
+    python real_game/agent.py jalon                     # choose the next milestone at the HUB terminal
+    python real_game/agent.py deposer                   # give the HUB terminal what it needs
 
 Each command waits 5 seconds so you can click in the game. F12 stops at once;
-so does leaving the game window. While some skills are still missing, the AI
-asks you to do those actions by hand and waits.
+so does leaving the game window.
 """
 from __future__ import annotations
 
@@ -22,19 +23,22 @@ import urllib.error
 
 from common import find_game_window
 from game_io import RealGame, Stopped
-from game_state import ROOT, fetch, read_player, read_state, to_simulation
+from game_state import fetch, read_player
 from menus import Memory, Menus
 from moves import Calibration, Mover, SkillError, calibrate
+from planner import RAW, Plan, Step, next_step, parse_schematics
 from screen import Screen
 
 RESOURCES = {"fer": "iron_ore", "cuivre": "copper_ore", "calcaire": "limestone"}
+PLATE, ROD = "Desc_IronPlate_C", "Desc_IronRod_C"
 # Buildings of the start: in-game name, cost, name of the spot remembered to use it.
 BUILDINGS = {
     "hub": ("Le H.U.B.", None, None),
-    "etabli": ("Établi", {"iron_plate": 3, "iron_rod": 3}, "workbench"),
-    "atelier": ("Atelier d'équipement", {"iron_plate": 6, "iron_rod": 4}, "workshop"),
+    "etabli": ("Établi", {PLATE: 3, ROD: 3}, "workbench"),
+    "atelier": ("Atelier d'équipement", {PLATE: 6, ROD: 4}, "workshop"),
 }
 COUNTDOWN = 5
+WAIT_S = 10
 
 
 def countdown(seconds: int = COUNTDOWN) -> None:
@@ -48,9 +52,25 @@ def stamp() -> str:
     return time.strftime("%H:%M:%S")
 
 
-def hub_id() -> str | None:
+def terminal() -> dict | None:
     terminals = fetch("getHUBTerminal")
-    return terminals[0].get("ID") if terminals else None
+    return terminals[0] if terminals else None
+
+
+def hub_id() -> str | None:
+    found = terminal()
+    return found.get("ID") if found else None
+
+
+def active_milestone() -> str | None:
+    found = terminal()
+    if not found or not found.get("HasActiveMilestone"):
+        return None
+    return (found.get("ActiveMilestone") or {}).get("ClassName")
+
+
+def read_plan() -> Plan:
+    return parse_schematics(fetch("getSchematics"))
 
 
 def build(menus: Menus, key: str) -> None:
@@ -71,63 +91,78 @@ def start_of_game(menus: Menus, memory: Memory) -> None:
         build(menus, "etabli")
 
 
-def ask_human(game: RealGame, what: str) -> bool:
-    """Until every skill exists: let the player do it by hand. Returns False to stop."""
-    game.release_all()
-    print(f"[{stamp()}] Pas encore automatisé : « {what} ».")
-    answer = input("  Fais-le dans le jeu, puis reviens ici et appuie sur Entrée (q puis Entrée pour arrêter) : ")
-    if answer.strip().lower() == "q":
-        return False
-    countdown(3)
-    return True
+def describe(step: Step, plan: Plan) -> str:
+    if step.kind == "select":
+        return f"choisir le jalon « {step.milestone.name} » (palier {step.milestone.tier})"
+    if step.kind == "deposit":
+        return f"déposer au terminal pour « {step.milestone.name} »"
+    if step.kind == "mine":
+        return f"miner {step.count} {plan.name(step.item)}"
+    if step.kind == "craft":
+        return f"fabriquer {step.count} × {step.recipe.name}"
+    return step.why
 
 
-def play(game: RealGame, mover: Mover, menus: Menus, memory: Memory, model: str) -> None:
-    from mini_satisfactory import data
-    from mini_satisfactory.ai_player import AIPlayer
-    from mini_satisfactory.sim import ACTIONS
+def choose_milestone_at_terminal(menus: Menus, step: Step) -> None:
+    menus.open_terminal(terminal())
+    try:
+        menus.select_milestone(step.milestone.name, step.milestone.tier,
+                               lambda: active_milestone() == step.milestone.cls)
+    finally:
+        menus.close()
 
-    ai = AIPlayer(model)
+
+def deposit_at_terminal(menus: Menus, milestone_cls: str) -> int:
+    menus.open_terminal(terminal())
+    try:
+        return menus.deposit(lambda: read_plan().milestones[milestone_cls].purchased)
+    finally:
+        menus.close()
+
+
+def do(step: Step, game: RealGame, mover: Mover, menus: Menus) -> None:
+    if step.kind == "select":
+        choose_milestone_at_terminal(menus, step)
+    elif step.kind == "deposit":
+        print(f"  {deposit_at_terminal(menus, step.milestone.cls)} piles déposées")
+    elif step.kind == "mine":
+        print(f"  {mover.mine_by_hand(RAW[step.item], step.count)} minés")
+    elif step.kind == "craft":
+        wanted = step.count * step.recipe.outputs[step.item]
+        print(f"  {menus.craft(step.recipe.name, step.item, int(wanted))} fabriqués")
+    elif step.kind == "wait":
+        game.wait(WAIT_S)
+
+
+def play(game: RealGame, mover: Mover, menus: Menus, memory: Memory) -> None:
     start_of_game(menus, memory)
+    failures = 0
     while True:
-        state = read_state()
-        if state.upgrades_done >= len(data.HUB_UPGRADES):
-            print(f"[{stamp()}] Les 6 HUB upgrades (Tier 0) sont faits dans cette partie.")
-            print("  La suite (jalons des paliers 1 et 2 au terminal du HUB) n'est pas encore programmée.")
+        plan = read_plan()
+        hub = terminal() or {}
+        active = active_milestone()
+        if active is not None and active not in plan.milestones:
+            raise SkillError("le jalon actif au terminal n'est pas un jalon que je connais")
+        step = next_step(plan, read_player().by_class, active, bool(hub.get("ShipDock", True)))
+        print(f"[{stamp()}] {describe(step, plan)}")
+        if step.kind in ("done", "stuck"):
             return
-        sim = to_simulation(state)
-        if "workshop" in memory.spots:
-            sim.structures.add("workshop")
-        action = ACTIONS[ai.act(sim)]
-        print(f"[{stamp()}] L'IA : {action.label()}")
         try:
-            if action.kind == "mine":
-                print(f"  {mover.mine_by_hand(action.target, data.HAND_MINE_AMOUNT)} minés")
-            elif action.kind == "craft" and data.RECIPES[action.target].needs is None:
-                recipe = data.RECIPES[action.target]
-                product, per_craft = next(iter(recipe.outputs.items()))
-                batch = max(1, int(data.CRAFT_BATCH_SECONDS // recipe.handcraft_seconds))
-                count = min(batch, sim.craftable(action.target)) * per_craft
-                made = menus.craft(data.label(product), product, int(count))
-                print(f"  {made} fabriqués")
-            elif action.kind == "build" and action.building == "workshop":
-                build(menus, "atelier")
-            elif action.kind == "wait":
-                game.wait(data.WAIT_SECONDS)
-            elif not ask_human(game, action.label()):
-                return
+            do(step, game, mover, menus)
+            failures = 0
         except SkillError as problem:
+            failures += 1
             print(f"  échec : {problem}")
-            if not ask_human(game, action.label()):
-                return
+            if failures >= 3:
+                raise SkillError(f"trois échecs de suite, j'arrête ({problem})")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("commande", choices=["calibrer", "jouer", "equiper", "construire", "aller", "miner", "fabriquer"])
+    parser.add_argument("commande", choices=["calibrer", "jouer", "equiper", "construire", "aller", "miner",
+                                             "fabriquer", "jalon", "deposer"])
     parser.add_argument("quoi", nargs="?", help="ressource, bâtiment ou recette")
     parser.add_argument("quantite", nargs="?", type=int, default=10)
-    parser.add_argument("--modele", default=str(ROOT / "models" / "ia_tier0.zip"))
     args = parser.parse_args()
     if args.commande in ("aller", "miner") and args.quoi not in RESOURCES:
         parser.error("indique la ressource : fer, cuivre ou calcaire")
@@ -158,7 +193,20 @@ def main() -> None:
         memory = Memory.load()
         menus = Menus(game, mover, Screen(window.left, window.top, window.width, window.height), memory)
         if args.commande == "jouer":
-            play(game, mover, menus, memory, args.modele)
+            play(game, mover, menus, memory)
+        elif args.commande == "jalon":
+            plan = read_plan()
+            step = next_step(plan, read_player().by_class, active_milestone(), bool((terminal() or {}).get("ShipDock", True)))
+            if step.kind != "select":
+                print(f"Pas de jalon à choisir maintenant : {describe(step, plan)}")
+            else:
+                choose_milestone_at_terminal(menus, step)
+                print(f"Jalon choisi : {step.milestone.name}")
+        elif args.commande == "deposer":
+            active = active_milestone()
+            if active is None:
+                raise SkillError("aucun jalon n'est choisi au terminal")
+            print(f"{deposit_at_terminal(menus, active)} piles déposées.")
         elif args.commande == "equiper":
             print("Équipé." if menus.equip_xeno_zapper() else "Déjà équipé.")
         elif args.commande == "construire":
@@ -170,13 +218,11 @@ def main() -> None:
         elif args.commande == "miner":
             print(f"Terminé : {mover.mine_by_hand(RESOURCES[args.quoi], args.quantite)} minés.")
         elif args.commande == "fabriquer":
-            from mini_satisfactory import data
-
-            labels = {data.label(item).lower(): item for item in data.ITEMS}
-            product = labels.get(args.quoi.lower())
-            if product is None:
-                raise SkillError(f"recette inconnue : {args.quoi}")
-            print(f"Terminé : {menus.craft(args.quoi, product, args.quantite)} fabriqués.")
+            recipes = {r.name.lower(): (item, r) for item, r in read_plan().recipes.items()}
+            if args.quoi.lower() not in recipes:
+                raise SkillError(f"recette inconnue ou pas encore débloquée : {args.quoi}")
+            product, recipe = recipes[args.quoi.lower()]
+            print(f"Terminé : {menus.craft(recipe.name, product, args.quantite)} fabriqués.")
     except Stopped as reason:
         print(f"Arrêt : {reason}.")
     except SkillError as problem:

@@ -30,6 +30,15 @@ USE_PITCHES = (10, 20, 0, 30)  # degrees below the horizon to look at a building
 PLACE_MOVES = 3  # walks forward to look for room elsewhere
 CRAFT_BUTTON = (1198, 940)  # workbench « Fabriquer » button, on the reference screen
 FIRST_RECIPE = (600, 397)  # workbench: first recipe under the search field, on the reference screen
+# HUB terminal, from the « Choisir une étape » tab: tier tabs, and the « Étape active » tab.
+TIER_TAB = (115, 90, 132)  # first tab offset x, y, then gap between tabs
+ACTIVE_TAB = (260, 0)
+MILESTONES_BELOW = 200  # milestone names are this far under the tabs
+# From the left of « Objets pertinents »: first item the player carries for the milestone.
+RELEVANT_SLOT = (31, 68, 104)  # offset x, y, then gap between items
+SUBMIT_WORDS = ("Envoyer", "Expédier", "Soumettre", "Valider", "Livrer")
+TERMINAL_DISTANCE = 2.5
+TERMINAL_SIDES = (0, 45, -45, 90, -90, 180)  # around the terminal, from its front
 
 
 def building_position(spot: dict) -> tuple[float, float]:
@@ -100,7 +109,8 @@ class Menus:
         self.raw.wait(0.6)
 
     def amount(self, item: str) -> float:
-        return self.raw.player().inventory.get(item, 0)
+        """How many of an item (game class name, like Desc_IronRod_C) the player carries."""
+        return self.raw.player().by_class.get(item, 0)
 
     # Inventory ------------------------------------------------------------------------
 
@@ -192,12 +202,10 @@ class Menus:
         before = {item: self.amount(item) for item in cost}
 
         def spent() -> bool:
-            inventory = self.raw.player().inventory
+            inventory = self.raw.player().by_class
             return all(before[item] - inventory.get(item, 0) >= qty for item, qty in cost.items())
 
         return spent
-
-    # Workbench -----------------------------------------------------------------------------
 
     def open_workbench(self) -> None:
         spot = self.memory.spots.get("workbench")
@@ -215,8 +223,89 @@ class Menus:
                     return
         raise SkillError("je n'arrive pas à ouvrir l'établi")
 
+    # HUB terminal ---------------------------------------------------------------------------
+
+    def open_terminal(self, terminal: dict) -> None:
+        """Walk to the HUB terminal (as the mod gives it) and open it."""
+        tx, ty = terminal["location"]["x"] / 100, terminal["location"]["y"] / 100
+        front = self.mover.cal.facing(float(terminal["location"].get("rotation", 0)))
+        known = self.memory.spots.get("terminal")
+        stands = [tuple(known["stand"])] if known else []
+        stands += [(tx + TERMINAL_DISTANCE * math.cos(math.radians(front + side)),
+                    ty + TERMINAL_DISTANCE * math.sin(math.radians(front + side))) for side in TERMINAL_SIDES]
+        for x, y in stands:
+            if not self.mover.walk_to(x, y, radius=0.8):
+                continue
+            self.mover.face(tx, ty)
+            for pitch in USE_PITCHES:
+                self.mover.set_pitch(pitch)
+                self.press(KEYS["interact"])
+                if self.screen.wait_for("Choisir une étape", "terminal_top", timeout=2.0):
+                    self.memory.spots["terminal"] = {"stand": [x, y]}
+                    self.memory.save()
+                    return
+        raise SkillError("je n'arrive pas à ouvrir le terminal du HUB")
+
+    def _terminal_anchor(self):
+        anchor = self.screen.wait_for("Choisir une étape", "terminal_top", timeout=3.0)
+        if anchor is None:
+            raise SkillError("le terminal du HUB n'est pas ouvert")
+        return anchor
+
+    def select_milestone(self, name: str, tier: int, is_active: Callable[[], bool]) -> None:
+        """In the open terminal: pick a tier, a milestone, then confirm. Checked with `is_active()`."""
+        anchor = self._terminal_anchor()
+        self.click_at(anchor.x, anchor.y)
+        dx, dy, gap = TIER_TAB
+        self.click_at(anchor.x + (dx + gap * tier) * self.sx, anchor.y + dy * self.sy)
+        tile = self.screen.find(name, "terminal_top", below=anchor.y + MILESTONES_BELOW * self.sy)
+        if tile is None:
+            raise SkillError(f"jalon introuvable dans le terminal : {name}")
+        self.click_at(tile.x, tile.y)
+        button = self.screen.find("Choisir une étape", "terminal_bottom")
+        if button is None:
+            raise SkillError("bouton « Choisir une étape » introuvable")
+        self.click_at(button.x, button.y)
+        if not self._wait_until(is_active, seconds=4):
+            raise SkillError(f"le jalon n'a pas été choisi : {name}")
+
+    def deposit(self, is_done: Callable[[], bool]) -> int:
+        """In the open terminal: give everything useful the player carries. Returns the stacks given."""
+        anchor = self._terminal_anchor()
+        self.click_at(anchor.x + ACTIVE_TAB[0] * self.sx, anchor.y + ACTIVE_TAB[1] * self.sy)
+        label = self.screen.wait_for("Objets pertinents", "terminal_top", timeout=3.0)
+        if label is None:
+            raise SkillError("je ne vois pas les objets à déposer")
+        dx, dy, gap = RELEVANT_SLOT
+        given = 0
+        for _ in range(12):  # each deposit reshuffles the row: start again from its first item
+            for slot in range(4):
+                before = dict(self.raw.player().by_class)
+                self.click_at(label.left + (dx + gap * slot) * self.sx, label.y + dy * self.sy, double=True)
+                self.raw.wait(0.4)
+                after = self.raw.player().by_class
+                if any(after.get(item, 0) < qty for item, qty in before.items()):
+                    given += 1
+                    break
+            else:
+                break
+        if given and not self._wait_until(is_done, seconds=2):
+            for word in SUBMIT_WORDS:  # some milestones may need a button to be sent
+                button = self.screen.find(word, "terminal_bottom")
+                if button is not None:
+                    self.click_at(button.x, button.y)
+                    break
+        return given
+
+    def close(self) -> None:
+        self.press(KEYS["close"])
+
+    # Workbench -----------------------------------------------------------------------------
+
     def craft(self, recipe: str, product: str, count: int) -> int:
-        """Craft `count` × `recipe` (its in-game name) at the workbench. Returns how many were made."""
+        """Make `count` of `product` (class name) with `recipe` (its in-game name) at the workbench.
+
+        Returns how many were made."""
         start = self.amount(product)
         self.open_workbench()
         try:

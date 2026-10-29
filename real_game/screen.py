@@ -19,6 +19,8 @@ AREAS = {
     "build_menu": ((0.15, 0.08, 0.50, 0.55), 0.5),
     "workbench": ((0.17, 0.14, 0.36, 0.80), 1.0),
     "workbench_recipe": ((0.40, 0.26, 0.54, 0.34), 1.0),  # name of the selected recipe
+    "terminal_top": ((0.15, 0.04, 0.75, 0.36), 0.5),  # tabs, milestones, items to deposit
+    "terminal_bottom": ((0.30, 0.74, 0.70, 0.90), 0.5),  # « Choisir une étape » button
 }
 HOLOGRAM_AREA = (0.20, 0.25, 0.80, 0.95)
 SHORT_WORD = 4  # words this short tolerate one misread letter

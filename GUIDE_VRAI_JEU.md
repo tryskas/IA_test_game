@@ -239,7 +239,17 @@ python real_game/agent.py fabriquer "Lingot de fer" 5
 
 L'IA retient où elle a construit l'établi et l'atelier (fichier `real_game/memory.json`, propre à chaque partie), pour y revenir ensuite.
 
-5. **Jouer** : l'IA fait le début de partie (équiper, HUB, établi), puis enchaîne les actions de son plan de jeu : miner, fabriquer à l'établi, construire l'atelier. Pour ce qu'elle ne sait pas encore faire (livrer le HUB, foreuses portables, machines...), elle t'affiche l'action et attend que tu la fasses, jusqu'à ce que ces compétences soient ajoutées.
+5. **Le terminal du HUB** : choisir le prochain jalon, puis y déposer ce que tu portes.
+
+```bash
+python real_game/agent.py jalon
+```
+
+```bash
+python real_game/agent.py deposer
+```
+
+6. **Jouer** : l'IA fait le début de partie si besoin (équiper, HUB, établi), puis remplit les jalons l'un après l'autre. Elle choisit le jalon le moins coûteux, mine et fabrique à l'établi ce qui manque en remontant la chaîne (béton à partir du calcaire, fil à partir du cuivre...), puis va tout déposer au terminal. Son plan est calculé à partir des données du jeu : coûts restants, recettes débloquées. Pour l'instant, tout est fait à la main : les machines viendront ensuite.
 
 ```bash
 python real_game/agent.py jouer

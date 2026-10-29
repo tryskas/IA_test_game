@@ -6,8 +6,10 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "real_game"))
 
-from menus import BUILD_TILES_BELOW, ZAPPER_OFFSET, building_position  # noqa: E402
-from screen import TextBox, best_match, hologram_state, normalize  # noqa: E402
+from menus import (  # noqa: E402
+    BUILD_TILES_BELOW, MILESTONES_BELOW, RELEVANT_SLOT, TIER_TAB, ZAPPER_OFFSET, building_position,
+)
+from screen import AREAS, TextBox, best_match, hologram_state, normalize  # noqa: E402
 
 try:
     import cv2
@@ -66,6 +68,33 @@ class MatchingTest(unittest.TestCase):
         rows = [TextBox("Vls", 538, 392, 50, 30, 0.6), TextBox("[ 228 ]", 810, 392, 60, 24, 0.9)]
         self.assertEqual(best_match(rows, "Vis").text, "Vls")
         self.assertIsNone(best_match(rows, "Fil"))
+
+
+class TerminalTest(unittest.TestCase):
+    """Positions in the HUB terminal, checked against where the demonstration clicked."""
+
+    def inside(self, area: str, box: TextBox) -> bool:
+        x0, y0, x1, y1 = AREAS[area][0]
+        return x0 * 2560 <= box.x <= x1 * 2560 and y0 * 1440 <= box.y <= y1 * 1440
+
+    def test_finds_tier_tabs_milestones_and_the_confirm_button(self):
+        boxes = recorded("terminal_click_0001")
+        anchor = best_match(boxes, "Choisir une étape")
+        self.assertTrue(near(anchor, 570, 102, 10) and self.inside("terminal_top", anchor))
+        dx, dy, gap = TIER_TAB
+        self.assertTrue(abs(anchor.x + dx + 2 * gap - 950) < 30)  # the « Palier 2 » tab
+        tile = best_match(boxes, "Construction de base", below=anchor.y + MILESTONES_BELOW)
+        self.assertTrue(near(tile, 1044, 432, 10) and self.inside("terminal_top", tile))
+        bottom = [b for b in boxes if self.inside("terminal_bottom", b)]
+        button = best_match(bottom, "Choisir une étape")
+        self.assertTrue(near(button, 1306, 1180, 10), button)
+
+    def test_first_item_to_deposit_is_where_it_was_double_clicked(self):
+        label = best_match(recorded("terminal_click_0003"), "Objets pertinents")
+        self.assertTrue(self.inside("terminal_top", label))
+        dx, dy, gap = RELEVANT_SLOT
+        self.assertTrue(abs(label.left + dx - 1545) <= 8 and abs(label.y + dy - 220) <= 8)
+        self.assertTrue(abs(label.left + dx + gap - 1649) <= 8)  # the second item
 
 
 @unittest.skipIf(cv2 is None, "opencv is not installed")
