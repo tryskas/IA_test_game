@@ -7,7 +7,14 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "real_game"))
 
 from menus import BUILD_TILES_BELOW, ZAPPER_OFFSET  # noqa: E402
-from screen import TextBox, best_match, normalize  # noqa: E402
+from screen import TextBox, best_match, hologram_state, normalize  # noqa: E402
+
+try:
+    import cv2
+except ImportError:
+    cv2 = None
+
+DEMO = HERE.parent / "demos" / "demo_20261029_094720" / "shots"
 
 
 def recorded(name: str) -> list[TextBox]:
@@ -47,6 +54,27 @@ class MatchingTest(unittest.TestCase):
         self.assertTrue(near(best_match(boxes, "Plaque de fer renforcée"), 616, 675, 20))
         self.assertIsNotNone(best_match(boxes, "Chercher une formule"))
         self.assertIsNone(best_match(boxes, "Lingot de fer"))  # not on screen (needs the search)
+
+    def test_short_words_tolerate_one_misread_letter(self):
+        rows = [TextBox("Vls", 538, 392, 50, 30, 0.6), TextBox("[ 228 ]", 810, 392, 60, 24, 0.9)]
+        self.assertEqual(best_match(rows, "Vis").text, "Vls")
+        self.assertIsNone(best_match(rows, "Fil"))
+
+
+@unittest.skipIf(cv2 is None, "opencv is not installed")
+class HologramTest(unittest.TestCase):
+    def state(self, shot: str) -> str:
+        image = cv2.imread(str(DEMO / shot))
+        h, w = image.shape[:2]
+        return hologram_state(image[int(h * 0.25):int(h * 0.95), int(w * 0.2):int(w * 0.8)])
+
+    def test_sees_the_blue_hologram_of_a_building_being_placed(self):
+        for shot in ("click_0004.jpg", "click_0006.jpg", "click_0008.jpg"):  # HUB, workbench, workshop
+            self.assertEqual(self.state(shot), "valid", shot)
+
+    def test_sees_no_hologram_in_menus_or_while_walking(self):
+        for shot in ("click_0003.jpg", "click_0009.jpg", "view_00002.jpg", "view_00052.jpg"):
+            self.assertEqual(self.state(shot), "none", shot)
 
 
 if __name__ == "__main__":

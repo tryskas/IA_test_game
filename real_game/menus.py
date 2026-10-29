@@ -22,8 +22,11 @@ MEMORY_FILE = Path(__file__).resolve().parent / "memory.json"
 REFERENCE_WIDTH, REFERENCE_HEIGHT = 2560, 1440  # screen size the offsets below were measured on
 ZAPPER_OFFSET = (61, 49)  # from the left of « Raccourcis d'équipement » to the first equipment slot
 BUILD_TILES_BELOW = 0.21  # build menu: results are under this height (fraction of the screen)
-PLACE_PITCH = 20  # degrees below the horizon when placing a building
+PLACE_TURNS = (0, 45, -45, 90, -90, 135, -135, 180)  # directions tried to find room for a building
+PLACE_PITCHES = (15, 25, 35, 8)  # degrees below the horizon: near and far spots
+PLACE_MOVES = 3  # walks forward to look for room elsewhere
 CRAFT_BUTTON = (1198, 940)  # workbench « Fabriquer » button, on the reference screen
+FIRST_RECIPE = (600, 397)  # workbench: first recipe under the search field, on the reference screen
 
 
 class Memory:
@@ -109,38 +112,58 @@ class Menus:
 
     # Build menu -------------------------------------------------------------------------
 
-    def build(self, name: str, done: Callable[[], bool], spot: str | None = None, tries: int = 4) -> None:
-        """Open the build menu, pick `name`, place it in front, check with `done()`.
+    def build(self, name: str, done: Callable[[], bool], spot: str | None = None) -> None:
+        """Open the build menu, pick `name`, place it where there is room, check with `done()`.
 
         `spot`: remember where we stood, to come back and use the building later.
         """
-        for attempt in range(tries):
-            self.press(KEYS["build"])
-            if self.screen.wait_for("Constructeur", "build_menu") is None:
-                raise SkillError("le menu de construction ne s'ouvre pas")
-            self.press("space")  # search field
-            self.type(name)
-            tile = self.screen.find(name, "build_menu", below=self.screen.top + BUILD_TILES_BELOW * self.screen.height)
-            if tile is None:
-                self.press(KEYS["close"])
-                raise SkillError(f"« {name} » n'est pas dans le menu de construction")
-            self.click_at(tile.x, tile.y)
-            self.mover.set_pitch(PLACE_PITCH)
-            self.raw.wait(0.4)
-            self.raw.check()
-            inputs.click()  # place the hologram where the camera looks
-            placed = self._wait_until(done, seconds=6)  # the mod sees new buildings a few seconds later
+        self.press(KEYS["build"])
+        if self.screen.wait_for("Constructeur", "build_menu") is None:
+            raise SkillError("le menu de construction ne s'ouvre pas")
+        self.press("space")  # search field
+        self.type(name)
+        tile = self.screen.find(name, "build_menu", below=self.screen.top + BUILD_TILES_BELOW * self.screen.height)
+        if tile is None:
+            self.press(KEYS["close"])
+            raise SkillError(f"« {name} » n'est pas dans le menu de construction")
+        self.click_at(tile.x, tile.y)
+        try:
+            pitch = self._place(done)
+        finally:
             self.press(KEYS["close"])  # leave build mode
-            if placed:
-                if spot:
-                    player = self.raw.player()
-                    self.memory.spots[spot] = {"x": player.x, "y": player.y,
-                                               "facing": self.mover.facing(player), "pitch": PLACE_PITCH}
-                    self.memory.save()
-                return
-            self.log(f"  impossible de poser ici (essai {attempt + 1}), je tourne")
-            self.mover.turn(70)
-        raise SkillError(f"je n'arrive pas à poser : {name}")
+        if spot:
+            player = self.raw.player()
+            self.memory.spots[spot] = {"x": player.x, "y": player.y,
+                                       "facing": self.mover.facing(player), "pitch": pitch}
+            self.memory.save()
+
+    def _place(self, done: Callable[[], bool]) -> float:
+        """Look around for a spot where the hologram is blue, click there. Returns the pitch used."""
+        seen = False
+        for move in range(PLACE_MOVES):
+            base = self.mover.facing()
+            for turn in PLACE_TURNS:
+                self.mover.turn(wrap(base + turn - self.mover.facing()))
+                for pitch in PLACE_PITCHES:
+                    self.mover.set_pitch(pitch)
+                    self.raw.wait(0.3)
+                    state = self.screen.hologram()
+                    seen = seen or state != "none"
+                    if state != "valid":
+                        continue
+                    self.raw.check()
+                    inputs.click()
+                    if self._wait_until(done, seconds=6):  # the mod sees new buildings a few seconds later
+                        return pitch
+                    self.log("  clic sans effet, je cherche ailleurs")
+            if not seen:
+                raise SkillError("aucun hologramme à l'écran : le bâtiment n'a pas été sélectionné")
+            self.log("  pas de place libre ici, j'avance un peu")
+            self.mover.set_pitch(0)
+            self.raw.hold(KEYS["forward"])
+            self.raw.wait(1.5)
+            self.raw.release(KEYS["forward"])
+        raise SkillError("aucun emplacement libre trouvé")
 
     def _wait_until(self, done: Callable[[], bool], seconds: float) -> bool:
         end = self.raw.now() + seconds
@@ -187,9 +210,12 @@ class Menus:
                 self.click_at(search.x, search.y)
                 self.type(recipe)
             row = self.screen.find(recipe, "workbench", below=(search.y + 25) if search else None)
-            if row is None:
-                raise SkillError(f"recette introuvable à l'établi : {recipe}")
-            self.click_at(row.x, row.y)
+            if row is not None:
+                self.click_at(row.x, row.y)
+            else:  # the search leaves the recipe first in the list, even if its name was misread
+                self.click_at(self.screen.left + FIRST_RECIPE[0] * self.sx, self.screen.top + FIRST_RECIPE[1] * self.sy)
+            if self.screen.find(recipe, "workbench_recipe") is None:
+                self.log(f"  je ne lis pas « {recipe} » comme recette choisie : je vérifierai ce qui est fabriqué")
             made = self._hold_to_craft(product, start, count, KEYS["craft"])
             if made == 0:  # the key did nothing: hold the button instead
                 self.raw.check()
