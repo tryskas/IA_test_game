@@ -14,6 +14,8 @@ Single skills, to test them one by one:
     python real_game/agent.py voir                      # 20 s of what the AI sees, saved as images
 
 The AI watches the screen (creatures, obstacles) unless --sans-vision is given.
+With the vision, it walks the way it learnt in the simulation (python train_walk.py,
+models/marche.zip) unless --marche-classique is given.
 
 Each command waits 5 seconds so you can click in the game. F12 stops at once;
 so does leaving the game window.
@@ -212,6 +214,8 @@ def play(game: RealGame, mover: Mover, menus: Menus, memory: Memory) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--sans-vision", action="store_true", help="ne pas analyser l'image (créatures, obstacles)")
+    parser.add_argument("--marche-classique", action="store_true",
+                        help="ne pas utiliser la marche apprise (models/marche.zip)")
     parser.add_argument("commande", choices=["calibrer", "jouer", "equiper", "construire", "aller", "miner", "voir",
                                              "fabriquer", "jalon", "deposer"])
     parser.add_argument("quoi", nargs="?", help="ressource, bâtiment ou recette")
@@ -259,6 +263,12 @@ def main() -> None:
         for spot in memory.data.pop("dangers", []):  # older memories kept dangers apart
             terrain.mark_danger(*spot)
         mover = Mover(game, Calibration.load(), terrain=terrain, eyes=eyes)
+        if eyes is not None and not args.marche_classique:
+            from walk_policy import WalkPolicy
+
+            mover.walker = WalkPolicy.load()
+            print("Marche apprise : models/marche.zip" if mover.walker else
+                  "Pas de marche apprise (lance « python train_walk.py ») : marche classique.")
         menus = Menus(game, mover, Screen(window.left, window.top, window.width, window.height), memory)
         if args.commande == "jouer":
             play(game, mover, menus, memory)

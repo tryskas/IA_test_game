@@ -114,6 +114,15 @@ def ground_distance(row: float, pitch: float, fov: float, aspect: float, eye_hei
     return min(farthest, eye_height / math.tan(math.radians(below)))
 
 
+def obstacle_distances(view: "View", pitch: float, trust: float = 12.0) -> list[float | None]:
+    """Per column: metres to what is in the way, None if nothing (or farther than `trust`)."""
+    found = []
+    for row in view.obstacle_rows:
+        distance = None if row is None else ground_distance(row, pitch, view.fov, view.aspect)
+        found.append(distance if distance is not None and distance <= trust else None)
+    return found
+
+
 @dataclass(frozen=True)
 class Threat:
     bearing: float  # degrees to turn to face it, + to the right

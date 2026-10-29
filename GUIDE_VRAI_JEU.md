@@ -279,6 +279,32 @@ python real_game/agent.py voir
 
 Pendant 20 secondes, elle enregistre dans `captures/vision/` des images annotées : créatures encadrées en orange avec leur angle, directions dégagées en vert et bloquées en rouge. Le premier lancement télécharge les modèles (environ 500 Mo). Ajoute `--sans-vision` à une commande pour jouer sans analyse d'image.
 
+## Apprendre à marcher (apprentissage par renforcement)
+
+Pour ne plus rester bloquée contre les falaises ni tomber, l'IA apprend à marcher par essais et erreurs dans un paysage simulé (`real_game/terrain_sim.py`) : collines, plateaux entourés de falaises, ravins, rochers. À chaque essai, elle doit rejoindre un point à 25-70 m. Elle gagne des points en s'en approchant et en arrivant. Elle en perd en se cognant, en tombant (dégâts de chute) et en mourant.
+
+Elle a les mêmes sens que dans le vrai jeu, toutes les 0,2 s :
+
+- pour 15 directions devant elle : ce qui bloque et à quelle distance, et si le sol se dérobe (analyse de profondeur) ;
+- ce que la carte apprise retient juste devant elle (obstacles et bords déjà vus) ;
+- la direction et la distance du prochain point du chemin, sa vie, et si elle est coincée.
+
+Elle choisit parmi 6 gestes : avancer, avancer en tournant à gauche ou à droite, tourner sur place à gauche ou à droite, sauter en avançant. Dans le vrai jeu, la carte et l'A* choisissent toujours le chemin. La marche apprise décide comment rejoindre le point suivant : contourner, sauter, s'arrêter avant un bord.
+
+Lance l'entraînement sur ton PC (20 à 40 min, le processeur suffit) :
+
+```bash
+python train_walk.py
+```
+
+Il affiche d'abord les résultats de deux marcheurs simples (au hasard, règle simple), puis ceux de l'IA tous les 150 000 pas, sur 100 paysages qu'elle n'a jamais vus : part d'arrivées, de chutes et de morts. Le meilleur marcheur est enregistré dans `models/marche.zip`.
+
+`python real_game/agent.py jouer` l'utilise ensuite dès que la vision est active : le message « Marche apprise : models/marche.zip » s'affiche. Ajoute `--marche-classique` pour revenir à l'ancienne marche. Pour refaire la comparaison sans réentraîner :
+
+```bash
+python train_walk.py --evaluer
+```
+
 ## Étape 7 : montrer une partie à l'IA
 
 Pour que l'IA joue seule du début à la fin, elle doit connaître chaque menu du jeu (inventaire, capsule, construction du HUB, établi, terminal). Joue une fois le début d'une **nouvelle partie** pendant que ce script enregistre :

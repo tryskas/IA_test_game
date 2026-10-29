@@ -1,3 +1,4 @@
+import math
 import sys
 import unittest
 from pathlib import Path
@@ -39,6 +40,25 @@ class PlanTest(unittest.TestCase):
         again = TerrainMap(terrain.to_data())
         self.assertTrue(again.is_blocked(again.cell(10, 10)))
         self.assertEqual(again.danger_near(5, 5), 1)
+
+    def test_a_wall_across_the_straight_line_is_noticed(self):
+        terrain = TerrainMap()
+        for y in range(-10, 11, 2):
+            terrain.mark_blocked(20, y, strength=2)
+        self.assertTrue(terrain.path_is_clear([(40, 0)]))  # the waypoint itself is clear...
+        self.assertFalse(terrain.route_is_clear((0, 0), [(40, 0)]))  # ...the way to it is not
+        self.assertTrue(terrain.route_is_clear((0, 0), [(0, 30), (40, 30)]))
+        terrain.mark_blocked(40, 0, strength=2)  # a node to mine, seen as in the way
+        self.assertTrue(terrain.route_is_clear((30, 0), [(40, 0)], goal=(40, 0)))
+
+    def test_what_is_seen_goes_on_the_map_and_is_recalled(self):
+        terrain = TerrainMap()
+        for _ in range(2):
+            terrain.note_sight(0, 0, 0, [-20, 0, 20], [None, 3.0, None], [False, False, True], drop_ahead=4.0)
+        self.assertTrue(terrain.is_blocked(terrain.cell(3, 0)))
+        drop = (4 * math.cos(math.radians(20)), 4 * math.sin(math.radians(20)))
+        self.assertTrue(terrain.is_blocked(terrain.cell(*drop)))
+        self.assertEqual(terrain.blocked_ahead(0, 0, 0, [-20, 0]), [None, 3.0])
 
 
 if __name__ == "__main__":

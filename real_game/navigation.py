@@ -18,6 +18,8 @@ DANGER_RADIUS = 30.0  # metres around an attack that the path avoids if it can
 DANGER_COST = 6.0  # extra cost of a cell near danger, per danger
 WALL_MARGIN_COST = 1.5  # extra cost of a cell next to a blocked one: keep some room
 MAX_EXPANSIONS = 60000
+DROP_AHEAD = 4.0  # metres: where a drop seen ahead is put on the map
+MEMORY_REACH = (1.5, 3.0, 4.5)  # metres ahead where the walker recalls what the map knows
 
 
 class TerrainMap:
@@ -59,8 +61,45 @@ class TerrainMap:
     def danger_near(self, x: float, y: float) -> int:
         return sum(1 for dx, dy in self.dangers if math.hypot(x - dx, y - dy) < DANGER_RADIUS)
 
+    def note_sight(self, x: float, y: float, facing: float, bearings, distances, drops,
+                   drop_ahead: float = DROP_AHEAD) -> bool:
+        """Put on the map what is seen from (x, y): per direction (degrees from `facing`), the
+        distance of what is in the way (None: nothing) and whether the ground falls away.
+        True if a cell just became blocked."""
+        changed = False
+        for bearing, distance, drop in zip(bearings, distances, drops):
+            angle = math.radians(facing + bearing)
+            for d in ([distance] if distance is not None else []) + ([drop_ahead] if drop else []):
+                changed |= self.mark_blocked(x + d * math.cos(angle), y + d * math.sin(angle))
+        return changed
+
+    def blocked_ahead(self, x: float, y: float, facing: float, bearings,
+                      reach: tuple[float, ...] = MEMORY_REACH) -> list[float | None]:
+        """Per direction: how far the nearest spot known to be blocked is (None: none within reach)."""
+        found = []
+        for bearing in bearings:
+            angle = math.radians(facing + bearing)
+            found.append(next((d for d in reach if self.is_blocked(
+                self.cell(x + d * math.cos(angle), y + d * math.sin(angle)))), None))
+        return found
+
     def path_is_clear(self, points: list[tuple[float, float]]) -> bool:
         return not any(self.is_blocked(self.cell(*p)) for p in points)
+
+    def route_is_clear(self, start: tuple[float, float], points: list[tuple[float, float]],
+                       goal: tuple[float, float] | None = None) -> bool:
+        """Is the straight walk from `start` through `points` free of blocked cells? The goal's
+        own cell doesn't count (a node to mine is often seen as in the way)."""
+        skip = {self.cell(*start)} | ({self.cell(*goal)} if goal is not None else set())
+        here = start
+        for point in points:
+            steps = max(1, int(math.hypot(point[0] - here[0], point[1] - here[1]) / (CELL / 2)))
+            for k in range(steps + 1):
+                cell = self.cell(here[0] + (point[0] - here[0]) * k / steps, here[1] + (point[1] - here[1]) * k / steps)
+                if cell not in skip and self.is_blocked(cell):
+                    return False
+            here = point
+        return True
 
     def plan(self, start: tuple[float, float], goal: tuple[float, float]) -> list[tuple[float, float]] | None:
         """Waypoints (cell centres) from start to goal, the goal itself last; None if no way is known."""

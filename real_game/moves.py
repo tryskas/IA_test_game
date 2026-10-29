@@ -33,6 +33,7 @@ BLOCK_NOW = 2  # stuck or fell there: blocked at once
 TRUST_SIGHT = 12.0  # metres: obstacles seen farther than this are not put on the map
 DROP_AHEAD = 4.0  # metres: where a drop seen ahead is put on the map
 STEP_S = 0.12  # how often the walk is corrected
+LEARNT_STUCK_S, LEARNT_STUCK_MOVE = 0.6, 0.5  # learnt walk: moved less than this (m) in this time (s), as terrain_sim.STUCK_STEPS
 MINE_RADIUS = 2.5  # metres from the node's centre where we stop to mine
 EYE_HEIGHT = 1.7  # metres
 AIM_PITCHES = (15, 25, 35, 45, 55, 65)  # degrees below the horizon tried to find the node
@@ -137,6 +138,7 @@ class Mover:
         self.pitch: float | None = None  # degrees looked down, once known
         self.avoid: dict[tuple[int, int], float] = {}  # nodes to leave alone until a given time
         self.current_node: Node | None = None
+        self.walker = None  # walk_policy.WalkPolicy: the walk learnt in the simulation, if trained
         self._seen_at = 0.0
 
     def facing(self, player: PlayerView | None = None) -> float:
@@ -196,6 +198,8 @@ class Mover:
         goal = (x, y)
         distance = math.hypot(x - player.x, y - player.y)
         timeout = timeout or 30 + 4 * distance / self.cal.walk_speed
+        if self.walker is not None and self.eyes is not None:
+            return self._walk_learnt(goal, radius, timeout)
         start = best_at = self.raw.now()
         best = distance
         path = self._plan(player, goal)
@@ -216,7 +220,7 @@ class Mover:
                     self.log("  chute : je retiens ce bord")
                     self.terrain.mark_blocked(check_pos[0], check_pos[1], strength=BLOCK_NOW)
                 last_z = player.z
-                if self._learn_from_eyes(player) and not self.terrain.path_is_clear(path[:2]):
+                if self._learn_from_eyes(player) and not self.terrain.route_is_clear((player.x, player.y), path[:2], goal):
                     path = self._plan(player, goal)
                 if distance < best - 1.0:
                     best, best_at = distance, now
@@ -256,36 +260,111 @@ class Mover:
             if forward:
                 self.raw.release(KEYS["forward"])
 
+    def _walk_learnt(self, goal: tuple[float, float], radius: float, timeout: float) -> bool:
+        """walk_to with the walk learnt in the simulation: the map and A* choose the way, the
+        learnt policy chooses every 0.2 s how to get to the next waypoint (go round, jump, stop
+        before an edge), seeing what the eyes see."""
+        from terrain_sim import DT, FORWARD_ACTIONS, STEER, TURN
+        from walk_policy import observe
+
+        player = self.raw.player()
+        start = best_at = self.raw.now()
+        best = math.hypot(goal[0] - player.x, goal[1] - player.y)
+        path = self._plan(player, goal)
+        forward, stuck, previous, stuck_times = False, False, 0, 0
+        last_z, last_spot = player.z, (player.x, player.y)
+        moves: list[tuple[float, float, float]] = []  # (time, x, y) while walking forward
+        self.set_pitch(WALK_PITCH)
+        try:
+            while self.raw.now() - start < timeout:
+                player = self.raw.player()
+                now = self.raw.now()
+                distance = math.hypot(goal[0] - player.x, goal[1] - player.y)
+                if distance <= radius:
+                    return True
+                self.terrain.mark_free(player.x, player.y)
+                if last_z - player.z > FALL_DROP:
+                    self.log("  chute : je retiens ce bord")
+                    self.terrain.mark_blocked(*last_spot, strength=BLOCK_NOW)
+                    path = self._plan(player, goal)
+                last_z, last_spot = player.z, (player.x, player.y)
+                if self._learn_from_eyes(player) and not self.terrain.route_is_clear((player.x, player.y), path[:2], goal):
+                    path = self._plan(player, goal)
+                if distance < best - 1.0:
+                    best, best_at = distance, now
+                elif now - best_at > NO_PROGRESS_S:
+                    self.log("  je n'avance plus vers le but")
+                    return False
+                while len(path) > 1 and math.hypot(path[0][0] - player.x, path[0][1] - player.y) < WAYPOINT_REACHED:
+                    path.pop(0)
+                # Stuck: walking forward for a while but hardly moving
+                moves = [m for m in moves if now - m[0] <= 3 * LEARNT_STUCK_S] if forward else []
+                moves.append((now, player.x, player.y))
+                earlier = [m for m in moves if now - m[0] >= LEARNT_STUCK_S]
+                held_long = bool(earlier)
+                moved = math.hypot(player.x - earlier[-1][1], player.y - earlier[-1][2]) if earlier else 0.0
+                if held_long and moved < LEARNT_STUCK_MOVE:
+                    if not stuck:  # just got stuck: the spot ahead goes on the map
+                        stuck_times += 1
+                        ahead = math.radians(self.facing(player))
+                        self.terrain.mark_blocked(player.x + 1.5 * math.cos(ahead), player.y + 1.5 * math.sin(ahead),
+                                                  strength=BLOCK_NOW)
+                        path = self._plan(player, goal)
+                        if stuck_times % 4 == 0:
+                            self._unstick(stuck_times // 4)
+                    stuck = True
+                elif held_long or not forward:
+                    stuck = False
+                pitch = self.pitch if self.pitch is not None else WALK_PITCH
+                obs = observe(self._fresh_view(), pitch, self.terrain, player.x, player.y, self.facing(player),
+                              path[0], player.hp, stuck, previous)
+                action = self.walker.act(obs)
+                wants_forward = action in FORWARD_ACTIONS
+                if wants_forward != forward:
+                    (self.raw.hold if wants_forward else self.raw.release)(KEYS["forward"])
+                    forward = wants_forward
+                left = DT
+                if action == 5:  # jump while walking
+                    self.raw.hold(KEYS["jump"])
+                    self.raw.wait(TAP_S)
+                    self.raw.release(KEYS["jump"])
+                    left -= TAP_S
+                turn = {1: -STEER, 2: STEER, 3: -TURN, 4: TURN}.get(action, 0.0)
+                if turn:
+                    self.turn(turn, speed=1.3 * abs(turn) / left)  # smooth, lasts the step
+                else:
+                    self.raw.wait(left)
+                previous = action
+            return False
+        finally:
+            if forward:
+                self.raw.release(KEYS["forward"])
+
     def _plan(self, player: PlayerView, goal: tuple[float, float]) -> list[tuple[float, float]]:
         path = self.terrain.plan((player.x, player.y), goal)
         return path if path else [goal]  # no known way: head straight and learn on the way
 
+    def _fresh_view(self):
+        """The latest view of the eyes, if recent enough."""
+        view = self.eyes.latest if self.eyes is not None else None
+        if view is None or self.raw.now() - view.taken_at > FRESH_VIEW_S:
+            return None
+        return view
+
     def _learn_from_eyes(self, player: PlayerView) -> bool:
         """Put on the map what the eyes see in the way. True if the map changed."""
-        from perception import ground_distance
+        from perception import obstacle_distances
 
-        view = self.eyes.latest if self.eyes is not None else None
+        view = self._fresh_view()
         if view is None or not view.obstacle_rows or view.taken_at <= self._seen_at:
             return False
-        if self.raw.now() - view.taken_at > FRESH_VIEW_S:
-            return False
         self._seen_at = view.taken_at
-        facing = self.facing(player)
         pitch = self.pitch if self.pitch is not None else WALK_PITCH
-        changed = False
-        for i, row in enumerate(view.obstacle_rows):
-            direction = math.radians(facing + view.column_bearing(i))
-            spots = []
-            if row is not None:
-                distance = ground_distance(row, pitch, view.fov, view.aspect)
-                if distance <= TRUST_SIGHT:
-                    spots.append(distance)
-            if i < len(view.drops) and view.drops[i]:
-                spots.append(DROP_AHEAD)
-            for distance in spots:
-                changed |= self.terrain.mark_blocked(player.x + distance * math.cos(direction),
-                                                     player.y + distance * math.sin(direction))
-        return changed
+        columns = range(len(view.obstacle_rows))
+        drops = [i < len(view.drops) and view.drops[i] for i in columns]
+        return self.terrain.note_sight(player.x, player.y, self.facing(player),
+                                       [view.column_bearing(i) for i in columns],
+                                       obstacle_distances(view, pitch, TRUST_SIGHT), drops, DROP_AHEAD)
 
     def _unstick(self, attempt: int) -> None:
         """Jump; after a few tries, also step sideways."""
