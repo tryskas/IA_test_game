@@ -122,10 +122,10 @@ def _way_down(rng, x, y, edge, height: float, stairs: bool) -> np.ndarray:
         length = height / slope
         strip = (y >= start) & (y < start + width) & (along >= 0) & (along < length)
         added[strip] = (height * (1 - along / length))[strip]
-    else:  # steps going down: each drop is harmless (steps up look like walls to the eyes)
+    else:  # steps going down, low enough that the eyes don't take them for an edge
         width = rng.uniform(5, 9)
-        drop = rng.uniform(1.5, 3.5)
-        tread = rng.uniform(2, 4)
+        drop = rng.uniform(0.8, 1.5)
+        tread = rng.uniform(1.5, 3)
         steps = math.ceil(height / drop)
         strip = (y >= start) & (y < start + width) & (along >= 0) & (along < steps * tread)
         level = np.maximum(height - (np.floor(along / tread) + 1) * drop, 0)

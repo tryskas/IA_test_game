@@ -80,6 +80,16 @@ class PlanTest(unittest.TestCase):
         again.mark_free(8, 0)
         self.assertFalse(again.is_blocked(again.cell(8, 0)))
 
+    def test_an_edge_is_kept_while_it_cannot_be_seen(self):
+        terrain = TerrainMap()
+        terrain.note_sight(0, 0, 0, [0], [None], [6.0])  # the ground falls away 6 m ahead
+        self.assertTrue(terrain.is_blocked(terrain.cell(6, 0)))
+        terrain.note_sight(-6, 0, 0, [0], [None], [None])  # 12 m away: too far to see an edge
+        terrain.note_sight(5, 0, 0, [0], [None], [None])  # 1 m away: hidden under the HUD
+        self.assertTrue(terrain.is_blocked(terrain.cell(6, 0)))
+        terrain.note_sight(0, 0, 0, [0], [None], [None])  # where it should show: seen safe after all
+        self.assertFalse(terrain.is_blocked(terrain.cell(6, 0)))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -52,6 +52,7 @@ class DepthReading:
     clearance: tuple[float, ...]  # per column: 1 = clear, 0.5 = at the limit, 0 = right in front
     obstacle_rows: tuple[float | None, ...]  # per column: where the obstacle meets the ground (row fraction)
     drops: tuple[bool, ...]  # per column: the ground falls away (cliff edge, hole, water)
+    drop_rows: tuple[float | None, ...] = ()  # per column: the nearest row where it has fallen away
 
 
 def read_depth(depth: np.ndarray, columns: int = COLUMNS) -> DepthReading:
@@ -84,7 +85,8 @@ def read_depth(depth: np.ndarray, columns: int = COLUMNS) -> DepthReading:
     band = rows(HORIZON_BAND)
     band_rows = fractions[band]
     sticking_out = (depth[band] - expected[band][:, None]) / unit
-    clearance, obstacle_rows, drops = [], [], []
+    clearance, obstacle_rows, drops, drop_rows = [], [], [], []
+    ground_rows = fractions[ground]
     with np.errstate(all="ignore"), warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)  # columns hidden by the hand have no data
         for i in range(columns):
@@ -96,8 +98,11 @@ def read_depth(depth: np.ndarray, columns: int = COLUMNS) -> DepthReading:
             obstacle_rows.append(float(band_rows[hits.max()]) if len(hits) and score > BLOCKED else None)
             seen = np.nanmedian(depth[ground][:, cols])
             wanted = float(np.median(expected[ground]))
-            drops.append(bool(np.isfinite(seen) and seen < DROP * wanted))
-    return DepthReading(tuple(clearance), tuple(obstacle_rows), tuple(drops))
+            drop = bool(np.isfinite(seen) and seen < DROP * wanted)
+            drops.append(drop)
+            fallen = np.nanmedian(depth[ground][:, cols], axis=1) < DROP * expected[ground]  # row by row
+            drop_rows.append(float(ground_rows[fallen].max()) if drop and fallen.any() else None)
+    return DepthReading(tuple(clearance), tuple(obstacle_rows), tuple(drops), tuple(drop_rows))
 
 
 def clearance_from_depth(depth: np.ndarray, columns: int = COLUMNS) -> tuple[float, ...]:
@@ -123,6 +128,17 @@ def obstacle_distances(view: "View", pitch: float, trust: float = 12.0) -> list[
     return found
 
 
+def drop_distances(view: "View", pitch: float, unknown: float = 4.0) -> list[float | None]:
+    """Per column: metres to where the ground falls away (`unknown` if it does but the row is
+    unknown), None if it doesn't."""
+    found = []
+    for i, drop in enumerate(view.drops):
+        row = view.drop_rows[i] if i < len(view.drop_rows) else None
+        found.append(None if not drop else unknown if row is None
+                     else ground_distance(row, pitch, view.fov, view.aspect))
+    return found
+
+
 @dataclass(frozen=True)
 class Threat:
     bearing: float  # degrees to turn to face it, + to the right
@@ -142,6 +158,7 @@ class View:
     obstacle_rows: tuple[float | None, ...] = ()  # where each column's obstacle meets the ground
     drops: tuple[bool, ...] = ()  # columns where the ground falls away
     aspect: float = 9 / 16  # height / width of the image analysed
+    drop_rows: tuple[float | None, ...] = ()  # where each column's ground has fallen away, nearest
 
     def column_bearing(self, index: int) -> float:
         width = len(self.clearance)
@@ -233,7 +250,7 @@ class Eyes:
             self.last_depth = np.asarray(depth.squeeze().cpu().numpy(), dtype=np.float32)
             reading = read_depth(self.last_depth)
         return View(taken_at, threats, reading.clearance, self.fov, reading.obstacle_rows, reading.drops,
-                    height / width)
+                    height / width, reading.drop_rows)
 
     def _watch(self) -> None:
         import mss

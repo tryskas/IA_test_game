@@ -294,7 +294,7 @@ Pour ne plus rester bloquée contre les falaises ni tomber, l'IA apprend à marc
 | Forêt dense | 8 % | se faufiler entre les arbres |
 | Terrasses | 12 % | descendre des gradins : certains sauts sont sans danger, d'autres font mal, des rampes les relient |
 
-Comme dans le vrai jeu, la carte apprise et l'A* donnent le prochain point du chemin, et la marche apprise décide comment y aller. La carte retient ce que les yeux voient. Une direction vue dégagée efface peu à peu une erreur des yeux. Un bord vu de loin n'est pas oublié en s'en approchant, quand le sol devant n'est plus visible.
+Comme dans le vrai jeu, la carte apprise et l'A* donnent le prochain point du chemin, et la marche apprise décide comment y aller. La carte retient ce que les yeux voient. Une direction vue dégagée efface peu à peu une erreur des yeux. Les yeux estiment à quelle distance le sol se dérobe, et le bord est placé à cet endroit sur la carte. Il n'est effacé que si, en regardant là où il devrait être visible (entre 3,5 et 7,6 m devant), le sol paraît sûr.
 
 Elle a les mêmes sens que dans le vrai jeu, toutes les 0,2 s :
 
@@ -324,6 +324,12 @@ Touches : 1 IA entraînée, 2 règle simple, 3 hasard, N autre paysage, P pour c
 
 ```bash
 python train_walk.py --evaluer
+```
+
+Pour entraîner davantage le marcheur déjà enregistré au lieu de repartir de zéro (il n'est remplacé que s'il fait mieux) :
+
+```bash
+python train_walk.py --continuer
 ```
 
 ## Étape 7 : montrer une partie à l'IA

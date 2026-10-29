@@ -27,7 +27,6 @@ import pygame  # noqa: E402
 
 from landscapes import KINDS  # noqa: E402
 from navigation import CELL  # noqa: E402
-from navigation import DROP_AHEAD  # noqa: E402
 from terrain_sim import (ACTIONS, BEARINGS, DT, GOAL_REACHED, SAFE_FALL, SIGHT, SIZE, STEP_UP,  # noqa: E402
                          WalkEnv, greedy_action, reachable)
 
@@ -130,9 +129,8 @@ class Viewer:
         win.blit(self.background, (0, 0))
         memory = pygame.Surface((int(CELL * SCALE), int(CELL * SCALE)), pygame.SRCALPHA)
         memory.fill((*MEMORY, 120))
-        for cell in env.map.blocked:
-            if env.map.is_blocked(cell):
-                win.blit(memory, screen(cell[0] * CELL, cell[1] * CELL))
+        for cell in env.map.walls():
+            win.blit(memory, screen(cell[0] * CELL, cell[1] * CELL))
         if len(self.trail) > 1:
             pygame.draw.lines(win, (40, 110, 240), False, [screen(*p) for p in self.trail], 3)
         route = [screen(env.x, env.y)] + [screen(*p) for p in env.route]  # the way A* works out on its map
@@ -145,7 +143,7 @@ class Viewer:
         pygame.draw.circle(win, (250, 200, 30), goal, int(GOAL_REACHED * SCALE), 3)
         pygame.draw.circle(win, (250, 200, 30), goal, 6)
         here = screen(env.x, env.y)
-        distances, drops = env.sight if env.sight else ([None] * len(BEARINGS), [False] * len(BEARINGS))
+        distances, drops = env.sight if env.sight else ([None] * len(BEARINGS), [None] * len(BEARINGS))
         for bearing, distance, drop in zip(BEARINGS, distances, drops):
             angle = math.radians(env.facing + bearing)
             reach = SIGHT if distance is None else distance
@@ -153,8 +151,8 @@ class Viewer:
             pygame.draw.line(win, (255, 255, 255) if distance is None else (235, 50, 50), here, end,
                              1 if distance is None else 3)
             if drop:
-                pygame.draw.circle(win, (255, 150, 30), screen(env.x + DROP_AHEAD * math.cos(angle),
-                                                               env.y + DROP_AHEAD * math.sin(angle)), 6)
+                pygame.draw.circle(win, (255, 150, 30), screen(env.x + drop * math.cos(angle),
+                                                               env.y + drop * math.sin(angle)), 6)
         facing = math.radians(env.facing)
         tip = (env.x + 1.8 * math.cos(facing), env.y + 1.8 * math.sin(facing))
         left = (env.x + 1.1 * math.cos(facing + 2.5), env.y + 1.1 * math.sin(facing + 2.5))

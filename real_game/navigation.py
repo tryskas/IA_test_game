@@ -18,10 +18,12 @@ DANGER_RADIUS = 30.0  # metres around an attack that the path avoids if it can
 DANGER_COST = 6.0  # extra cost of a cell near danger, per danger
 WALL_MARGIN_COST = 1.5  # extra cost of a cell next to a blocked one: keep some room
 MAX_EXPANSIONS = 60000
-DROP_AHEAD = 4.0  # metres: where a drop seen ahead is put on the map
+DROP_AHEAD = 4.0  # metres: where a drop is put on the map when its distance is unknown
 SIGHT_CAP = 4  # a cell seen in the way counts at most this much: a few clear looks undo a mistake
 CLEAR_FROM = 3.5  # metres: a direction seen clear frees the cells from here to the reach of sight
 # (nearer, the ground is hidden under the HUD: an edge there can't be seen, so it must not be forgotten)
+EDGE_SEEN = (3.5, 7.6)  # metres ahead where the eyes can tell the ground falls away (5° down)
+EDGE_VOTES = 2  # an edge is dangerous: blocked at the first sighting, until seen safe again
 MEMORY_REACH = (1.5, 3.0, 4.5)  # metres ahead where the walker recalls what the map knows
 
 
@@ -29,11 +31,13 @@ class TerrainMap:
     def __init__(self, data: dict | None = None):
         data = data or {}
         self.blocked: dict[tuple[int, int], int] = {tuple(c): n for c, n in data.get("blocked", [])}
+        self.edges: dict[tuple[int, int], int] = {tuple(c): n for c, n in data.get("edges", [])}  # ground falls away
         self.solid: set[tuple[int, int]] = {tuple(c) for c in data.get("solid", [])}  # known by bumping or falling
         self.dangers: list[tuple[float, float]] = [tuple(d) for d in data.get("dangers", [])]
 
     def to_data(self) -> dict:
         return {"blocked": [[list(c), n] for c, n in self.blocked.items()],
+                "edges": [[list(c), n] for c, n in self.edges.items()],
                 "solid": [list(c) for c in self.solid],
                 "dangers": [list(d) for d in self.dangers]}
 
@@ -46,7 +50,19 @@ class TerrainMap:
         return (cell[0] + 0.5) * CELL, (cell[1] + 0.5) * CELL
 
     def is_blocked(self, cell: tuple[int, int]) -> bool:
-        return cell in self.solid or self.blocked.get(cell, 0) >= BLOCK_SCORE
+        return cell in self.solid or self.blocked.get(cell, 0) >= BLOCK_SCORE or self.edges.get(cell, 0) >= BLOCK_SCORE
+
+    def walls(self) -> set[tuple[int, int]]:
+        """Every blocked cell."""
+        return ({c for c, votes in self.blocked.items() if votes >= BLOCK_SCORE} | self.solid
+                | {c for c, votes in self.edges.items() if votes >= BLOCK_SCORE})
+
+    def mark_edge(self, x: float, y: float) -> bool:
+        """The ground falls away at (x, y). Returns True if the cell just became blocked."""
+        cell = self.cell(x, y)
+        before = self.is_blocked(cell)
+        self.edges[cell] = min(self.edges.get(cell, 0) + EDGE_VOTES, SIGHT_CAP)
+        return not before and self.is_blocked(cell)
 
     def mark_blocked(self, x: float, y: float, strength: int = 1, solid: bool = False) -> bool:
         """Something is in the way at (x, y): seen (counts as a vote), or `solid` when the player
@@ -62,20 +78,20 @@ class TerrainMap:
         """The player stands there: it is not blocked, whatever was thought before."""
         cell = self.cell(x, y)
         self.blocked.pop(cell, None)
+        self.edges.pop(cell, None)
         self.solid.discard(cell)
 
-    def _seen_clear(self, x: float, y: float, angle: float, reach: float) -> None:
-        """Nothing seen in that direction: cells seen in the way before lose a vote."""
-        steps = int((reach - CLEAR_FROM) / (CELL / 2)) + 1
+    def _seen_clear(self, votes: dict, x: float, y: float, angle: float, start: float, end: float) -> None:
+        """Nothing seen from `start` to `end` metres in that direction: cells there lose a vote."""
+        steps = int((end - start) / (CELL / 2)) + 1
         cos, sin = math.cos(angle), math.sin(angle)
-        cells = {self.cell(x + (CLEAR_FROM + k * CELL / 2) * cos, y + (CLEAR_FROM + k * CELL / 2) * sin)
-                 for k in range(steps)}
+        cells = {self.cell(x + (start + k * CELL / 2) * cos, y + (start + k * CELL / 2) * sin) for k in range(steps)}
         for cell in cells - self.solid:
-            votes = self.blocked.get(cell, 0)
-            if votes > 1:
-                self.blocked[cell] = min(votes, SIGHT_CAP) - 1
-            elif votes:
-                del self.blocked[cell]
+            count = votes.get(cell, 0)
+            if count > 1:
+                votes[cell] = min(count, SIGHT_CAP) - 1
+            elif count:
+                del votes[cell]
 
     def mark_danger(self, x: float, y: float) -> None:
         self.dangers.append((x, y))
@@ -87,16 +103,26 @@ class TerrainMap:
     def note_sight(self, x: float, y: float, facing: float, bearings, distances, drops,
                    drop_ahead: float = DROP_AHEAD, reach: float = 12.0) -> bool:
         """Put on the map what is seen from (x, y): per direction (degrees from `facing`), the
-        distance of what is in the way (None: nothing within `reach`) and whether the ground falls
-        away. A direction seen clear frees what was wrongly seen there before.
+        distance of what is in the way (None: nothing within `reach`) and of where the ground falls
+        away (None: it doesn't; True: it does, distance unknown). What is seen clear loses a vote:
+        mistakes of the eyes are undone, but an edge only where an edge could have been seen.
         True if a cell just became blocked."""
         changed = False
         for bearing, distance, drop in zip(bearings, distances, drops):
             angle = math.radians(facing + bearing)
-            if distance is None and not drop:
-                self._seen_clear(x, y, angle, reach)
-            for d in ([distance] if distance is not None else []) + ([drop_ahead] if drop else []):
-                changed |= self.mark_blocked(x + d * math.cos(angle), y + d * math.sin(angle))
+            if drop is True:
+                drop = drop_ahead
+            elif drop is False:
+                drop = None
+            if distance is None:
+                self._seen_clear(self.blocked, x, y, angle, CLEAR_FROM, reach)
+            else:
+                changed |= self.mark_blocked(x + distance * math.cos(angle), y + distance * math.sin(angle))
+            if drop is None:
+                if distance is None or distance > EDGE_SEEN[1]:
+                    self._seen_clear(self.edges, x, y, angle, *EDGE_SEEN)
+            else:
+                changed |= self.mark_edge(x + drop * math.cos(angle), y + drop * math.sin(angle))
         return changed
 
     def blocked_ahead(self, x: float, y: float, facing: float, bearings,
@@ -137,7 +163,7 @@ class TerrainMap:
         y0 = math.floor((min(start[1], goal[1]) - SEARCH_MARGIN) / CELL)
         y1 = math.floor((max(start[1], goal[1]) + SEARCH_MARGIN) / CELL)
 
-        walls = {c for c, votes in self.blocked.items() if votes >= BLOCK_SCORE} | self.solid
+        walls = self.walls()
         by_walls = {(c[0] + dx, c[1] + dy) for c in walls for dx in (-1, 0, 1) for dy in (-1, 0, 1)}
         danger_costs: dict[tuple[int, int], float] = {}
 

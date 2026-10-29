@@ -353,7 +353,7 @@ class Mover:
 
     def _learn_from_eyes(self, player: PlayerView) -> bool:
         """Put on the map what the eyes see in the way. True if the map changed."""
-        from perception import obstacle_distances
+        from perception import drop_distances, obstacle_distances
 
         view = self._fresh_view()
         if view is None or not view.obstacle_rows or view.taken_at <= self._seen_at:
@@ -361,7 +361,8 @@ class Mover:
         self._seen_at = view.taken_at
         pitch = self.pitch if self.pitch is not None else WALK_PITCH
         columns = range(len(view.obstacle_rows))
-        drops = [i < len(view.drops) and view.drops[i] for i in columns]
+        drops = drop_distances(view, pitch, DROP_AHEAD)
+        drops += [None] * (len(columns) - len(drops))
         return self.terrain.note_sight(player.x, player.y, self.facing(player),
                                        [view.column_bearing(i) for i in columns],
                                        obstacle_distances(view, pitch, TRUST_SIGHT), drops, DROP_AHEAD,

@@ -129,7 +129,7 @@ class RealSensesTest(unittest.TestCase):
         self.assertEqual(obs.shape, (FEATURES,))
         self.assertEqual(list(obs[:COLUMNS]), [1.0 if i == 7 else 0.0 for i in range(COLUMNS)])
         self.assertAlmostEqual(obs[COLUMNS + 7], 1 - max(ground_distance(0.66, 5.0, 90.0, 9 / 16), 7.6) / 15, 5)
-        self.assertEqual(obs[2 * COLUMNS + 2], 1.0)
+        self.assertAlmostEqual(obs[2 * COLUMNS + 2], 0.6, 5)  # an edge, distance unknown: 4 m
         self.assertGreater(obs[3 * COLUMNS + 7], 0)  # the map's memory, ahead
         goal = obs[4 * COLUMNS:4 * COLUMNS + 3]
         self.assertAlmostEqual(math.degrees(math.atan2(goal[0], goal[1])), 90.0, 3)  # to the right

@@ -15,7 +15,7 @@ import gymnasium as gym
 import numpy as np
 
 from landscapes import SIZE, Landscape, make_landscape
-from navigation import BLOCK_SCORE, CELL, MEMORY_REACH, TerrainMap
+from navigation import BLOCK_SCORE, CELL, EDGE_SEEN, MEMORY_REACH, TerrainMap
 
 DT = 0.2  # seconds per decision
 SPEED = 5.0  # metres per second, walking (calibrated: 5.03)
@@ -28,7 +28,8 @@ FOV = 90.0
 SIGHT = 15.0  # metres the depth analysis reaches
 TRUST = 12.0  # obstacles farther than this are not reported (as moves.TRUST_SIGHT)
 NEAREST_SEEN = 7.6  # looking 5° down, the depth band starts this far: nearer obstacles read as this
-DROP_SEEN = (3.5, 7.6)  # metres ahead where the ground band shows a drop (5° down, above the HUD)
+DROP_SEEN = EDGE_SEEN  # metres ahead where the ground band shows a drop (5° down, above the HUD)
+EDGE_FAR = 10.0  # an edge this far would read as 0
 STEEP_UP, STEEP_DOWN = STEP_UP, -2.0  # height change over one metre that shows as a wall / an edge
 STEER, TURN = 15.0, 35.0  # degrees: steering while walking, turning on the spot
 ACTIONS = ("avancer", "avancer à gauche", "avancer à droite",
@@ -36,7 +37,7 @@ ACTIONS = ("avancer", "avancer à gauche", "avancer à droite",
 FORWARD_ACTIONS = (0, 1, 2, 5)
 GOAL_REACHED = 2.5
 WAYPOINT_REACHED = 2.5  # as moves.WAYPOINT_REACHED
-MAX_STEPS = 500
+MAX_STEPS = 800  # 160 s: enough to walk along a whole cliff to find the way down
 FALL_COST = 0.3  # reward lost per point of health lost falling
 DEATH_COST = 50.0
 STALE_VIEW = 0.3  # chance that the eyes have nothing new this step (the real depth model is slower)
@@ -60,6 +61,11 @@ def nearness(distance: float | None) -> float:
     if distance is None:
         return 0.0
     return 1.0 - min(max(distance, NEAREST_SEEN), SIGHT) / SIGHT
+
+
+def edge_nearness(distance: float | None) -> float:
+    """0 when the ground doesn't fall away ahead, else bigger when the edge is nearer."""
+    return 0.0 if distance is None else 1.0 - min(distance, EDGE_FAR) / EDGE_FAR
 
 
 def recalled(terrain: TerrainMap, x: float, y: float, facing: float) -> np.ndarray:
@@ -169,7 +175,7 @@ class WalkEnv(gym.Env):
 
     def look(self):
         """What the depth analysis would report: per column, metres to what is in the way
-        (None: nothing within TRUST) and whether the ground falls away ahead."""
+        (None: nothing within TRUST) and to where the ground falls away (None: it doesn't)."""
         rng = self.np_random
         angles = np.radians(self.facing + BEARINGS)
         steps = np.arange(0.5, SIGHT + 0.01, 0.5)
@@ -182,15 +188,18 @@ class WalkEnv(gym.Env):
         distance = np.where(first >= 0, steps[np.maximum(first, 0)], np.inf)
         ahead = (steps >= DROP_SEEN[0]) & (steps <= DROP_SEEN[1])
         before_wall = steps[None, :] < distance[:, None]
-        drops = ((change < STEEP_DOWN) & ahead[None, :] & before_wall).any(axis=1)
+        edge = (change < STEEP_DOWN) & ahead[None, :] & before_wall
+        edge_at = np.where(edge.any(axis=1), steps[edge.argmax(axis=1)], np.inf)
         if self.noise:  # the real analysis misses things, and sometimes sees what isn't there
             flip = rng.random(COLUMNS) < 0.06
             distance = np.where(flip & np.isinf(distance), rng.uniform(NEAREST_SEEN, TRUST, COLUMNS),
                                 np.where(flip, np.inf, distance))
-            drops = (drops & (rng.random(COLUMNS) > 0.25)) | (rng.random(COLUMNS) < 0.02)
             distance = distance * rng.uniform(0.8, 1.2, COLUMNS)
+            edge_at = np.where(rng.random(COLUMNS) < 0.25, np.inf, edge_at * rng.uniform(0.85, 1.15, COLUMNS))
+            edge_at = np.where(rng.random(COLUMNS) < 0.02, rng.uniform(*DROP_SEEN, COLUMNS), edge_at)
         seen = [None if not d <= TRUST else max(float(d), NEAREST_SEEN) for d in distance]
-        return seen, [bool(d) for d in drops]
+        drops = [None if np.isinf(d) else min(max(float(d), DROP_SEEN[0]), DROP_SEEN[1]) for d in edge_at]
+        return seen, drops
 
     def observe(self) -> np.ndarray:
         if self.sight is None or not (self.noise and self.np_random.random() < STALE_VIEW):
@@ -202,7 +211,8 @@ class WalkEnv(gym.Env):
         distances, drops = self.sight
         target = self.route[0]
         bearing = math.degrees(math.atan2(target[1] - self.y, target[0] - self.x)) - self.facing
-        return features([d is not None for d in distances], [nearness(d) for d in distances], drops,
+        return features([d is not None for d in distances], [nearness(d) for d in distances],
+                        [edge_nearness(d) for d in drops],
                         recalled(self.map, self.x, self.y, self.facing), (bearing + 180) % 360 - 180,
                         math.hypot(target[0] - self.x, target[1] - self.y), self.hp, self.stuck >= STUCK_STEPS,
                         self.previous)
