@@ -218,7 +218,7 @@ class Mover:
                 self.terrain.mark_free(player.x, player.y)
                 if last_z - player.z > FALL_DROP:
                     self.log("  chute : je retiens ce bord")
-                    self.terrain.mark_blocked(check_pos[0], check_pos[1], strength=BLOCK_NOW)
+                    self.terrain.mark_blocked(check_pos[0], check_pos[1], strength=BLOCK_NOW, solid=True)
                 last_z = player.z
                 if self._learn_from_eyes(player) and not self.terrain.route_is_clear((player.x, player.y), path[:2], goal):
                     path = self._plan(player, goal)
@@ -251,7 +251,7 @@ class Mover:
                         unstick += 1
                         ahead = math.radians(self.facing(player))
                         self.terrain.mark_blocked(player.x + 1.5 * math.cos(ahead), player.y + 1.5 * math.sin(ahead),
-                                                  strength=BLOCK_NOW)
+                                                  strength=BLOCK_NOW, solid=True)
                         self._unstick(unstick)
                         path = self._plan(self.raw.player(), goal)
                     check_at, check_pos = self.raw.now() + STUCK_S, (player.x, player.y)
@@ -285,7 +285,7 @@ class Mover:
                 self.terrain.mark_free(player.x, player.y)
                 if last_z - player.z > FALL_DROP:
                     self.log("  chute : je retiens ce bord")
-                    self.terrain.mark_blocked(*last_spot, strength=BLOCK_NOW)
+                    self.terrain.mark_blocked(*last_spot, strength=BLOCK_NOW, solid=True)
                     path = self._plan(player, goal)
                 last_z, last_spot = player.z, (player.x, player.y)
                 if self._learn_from_eyes(player) and not self.terrain.route_is_clear((player.x, player.y), path[:2], goal):
@@ -308,7 +308,7 @@ class Mover:
                         stuck_times += 1
                         ahead = math.radians(self.facing(player))
                         self.terrain.mark_blocked(player.x + 1.5 * math.cos(ahead), player.y + 1.5 * math.sin(ahead),
-                                                  strength=BLOCK_NOW)
+                                                  strength=BLOCK_NOW, solid=True)
                         path = self._plan(player, goal)
                         if stuck_times % 4 == 0:
                             self._unstick(stuck_times // 4)
@@ -364,7 +364,8 @@ class Mover:
         drops = [i < len(view.drops) and view.drops[i] for i in columns]
         return self.terrain.note_sight(player.x, player.y, self.facing(player),
                                        [view.column_bearing(i) for i in columns],
-                                       obstacle_distances(view, pitch, TRUST_SIGHT), drops, DROP_AHEAD)
+                                       obstacle_distances(view, pitch, TRUST_SIGHT), drops, DROP_AHEAD,
+                                       reach=TRUST_SIGHT)
 
     def _unstick(self, attempt: int) -> None:
         """Jump; after a few tries, also step sideways."""

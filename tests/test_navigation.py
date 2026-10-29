@@ -60,6 +60,26 @@ class PlanTest(unittest.TestCase):
         self.assertTrue(terrain.is_blocked(terrain.cell(*drop)))
         self.assertEqual(terrain.blocked_ahead(0, 0, 0, [-20, 0]), [None, 3.0])
 
+    def test_a_mistake_of_the_eyes_is_undone_by_clear_looks(self):
+        terrain = TerrainMap()
+        for _ in range(2):
+            terrain.note_sight(0, 0, 0, [0], [8.0], [False])  # wrongly seen in the way, twice
+        self.assertTrue(terrain.is_blocked(terrain.cell(8, 0)))
+        for _ in range(3):
+            terrain.note_sight(0, 0, 0, [0], [None], [False])  # then seen clear
+        self.assertFalse(terrain.is_blocked(terrain.cell(8, 0)))
+
+    def test_what_was_bumped_into_stays_until_walked_on(self):
+        terrain = TerrainMap()
+        terrain.mark_blocked(8, 0, strength=2, solid=True)
+        for _ in range(5):
+            terrain.note_sight(0, 0, 0, [0], [None], [False])
+        self.assertTrue(terrain.is_blocked(terrain.cell(8, 0)))
+        again = TerrainMap(terrain.to_data())
+        self.assertTrue(again.is_blocked(again.cell(8, 0)))
+        again.mark_free(8, 0)
+        self.assertFalse(again.is_blocked(again.cell(8, 0)))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -281,7 +281,20 @@ Pendant 20 secondes, elle enregistre dans `captures/vision/` des images annotée
 
 ## Apprendre à marcher (apprentissage par renforcement)
 
-Pour ne plus rester bloquée contre les falaises ni tomber, l'IA apprend à marcher par essais et erreurs dans un paysage simulé (`real_game/terrain_sim.py`) : collines, plateaux entourés de falaises, ravins, rochers. À chaque essai, elle doit rejoindre un point à 25-70 m. Elle gagne des points en s'en approchant et en arrivant. Elle en perd en se cognant, en tombant (dégâts de chute) et en mourant.
+Pour ne plus rester bloquée contre les falaises ni tomber, l'IA apprend à marcher par essais et erreurs dans des paysages simulés (`real_game/landscapes.py`). À chaque essai, elle doit rejoindre un point à 25-110 m. Elle gagne des points en s'en approchant et en arrivant. Elle en perd en se cognant, en tombant (dégâts de chute) et en mourant. Il existe toujours un chemin sûr, mais la ligne droite est souvent un piège :
+
+| Paysage | Part des essais | Ce qu'il faut apprendre |
+|---|---|---|
+| Terrain varié | 30 % | collines, plateaux, ravins, rochers, arbres, bouts de murs |
+| Mur avec une ouverture | 10 % | longer un long mur jusqu'au passage |
+| Cul-de-sac | 7 % | sortir d'un mur en U ouvert du mauvais côté, donc s'éloigner du but d'abord |
+| Descendre sans mourir | 15 % | depuis une falaise de 10 à 22 m, trouver la rampe ou l'escalier |
+| Monter sur un plateau | 6 % | longer la falaise jusqu'à la rampe |
+| Canyon et pont | 12 % | traverser un canyon mortel par un pont étroit |
+| Forêt dense | 8 % | se faufiler entre les arbres |
+| Terrasses | 12 % | descendre des gradins : certains sauts sont sans danger, d'autres font mal, des rampes les relient |
+
+Comme dans le vrai jeu, la carte apprise et l'A* donnent le prochain point du chemin, et la marche apprise décide comment y aller. La carte retient ce que les yeux voient. Une direction vue dégagée efface peu à peu une erreur des yeux. Un bord vu de loin n'est pas oublié en s'en approchant, quand le sol devant n'est plus visible.
 
 Elle a les mêmes sens que dans le vrai jeu, toutes les 0,2 s :
 
@@ -291,13 +304,13 @@ Elle a les mêmes sens que dans le vrai jeu, toutes les 0,2 s :
 
 Elle choisit parmi 6 gestes : avancer, avancer en tournant à gauche ou à droite, tourner sur place à gauche ou à droite, sauter en avançant. Dans le vrai jeu, la carte et l'A* choisissent toujours le chemin. La marche apprise décide comment rejoindre le point suivant : contourner, sauter, s'arrêter avant un bord.
 
-Lance l'entraînement sur ton PC (20 à 40 min, le processeur suffit) :
+Lance l'entraînement sur ton PC (environ une heure, le processeur suffit) :
 
 ```bash
 python train_walk.py
 ```
 
-Il affiche d'abord les résultats de deux marcheurs simples (au hasard, règle simple), puis ceux de l'IA tous les 150 000 pas, sur 100 paysages qu'elle n'a jamais vus : part d'arrivées, de chutes et de morts. Le meilleur marcheur est enregistré dans `models/marche.zip`.
+Il affiche d'abord les résultats de deux marcheurs simples (au hasard, règle simple), puis ceux de l'IA tous les 250 000 pas, sur 160 paysages qu'elle n'a jamais vus (20 de chaque sorte) : part d'arrivées, de chutes et de morts. À la fin, un tableau donne la part d'arrivées pour chaque sorte de paysage. Le meilleur marcheur est enregistré dans `models/marche.zip`.
 
 Pour regarder l'IA marcher sur ces paysages, vus de dessus, avec ce que voient ses yeux et ce que retient sa carte :
 
@@ -305,7 +318,7 @@ Pour regarder l'IA marcher sur ces paysages, vus de dessus, avec ce que voient s
 python watch_walk.py
 ```
 
-Touches : 1 IA entraînée, 2 règle simple, 3 hasard, N autre paysage, + et - pour la vitesse.
+Touches : 1 IA entraînée, 2 règle simple, 3 hasard, N autre paysage, P pour choisir une sorte de paysage (tous, mur, canyon...), + et - pour la vitesse. On peut aussi en demander une seule au lancement, par exemple `python watch_walk.py --paysage descent` (sortes : general, wall, dead_end, descent, ascent, canyon, forest, terraces).
 
 `python real_game/agent.py jouer` l'utilise ensuite dès que la vision est active : le message « Marche apprise : models/marche.zip » s'affiche. Ajoute `--marche-classique` pour revenir à l'ancienne marche. Pour refaire la comparaison sans réentraîner :
 

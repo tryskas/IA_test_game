@@ -19,6 +19,9 @@ DANGER_COST = 6.0  # extra cost of a cell near danger, per danger
 WALL_MARGIN_COST = 1.5  # extra cost of a cell next to a blocked one: keep some room
 MAX_EXPANSIONS = 60000
 DROP_AHEAD = 4.0  # metres: where a drop seen ahead is put on the map
+SIGHT_CAP = 4  # a cell seen in the way counts at most this much: a few clear looks undo a mistake
+CLEAR_FROM = 3.5  # metres: a direction seen clear frees the cells from here to the reach of sight
+# (nearer, the ground is hidden under the HUD: an edge there can't be seen, so it must not be forgotten)
 MEMORY_REACH = (1.5, 3.0, 4.5)  # metres ahead where the walker recalls what the map knows
 
 
@@ -26,10 +29,12 @@ class TerrainMap:
     def __init__(self, data: dict | None = None):
         data = data or {}
         self.blocked: dict[tuple[int, int], int] = {tuple(c): n for c, n in data.get("blocked", [])}
+        self.solid: set[tuple[int, int]] = {tuple(c) for c in data.get("solid", [])}  # known by bumping or falling
         self.dangers: list[tuple[float, float]] = [tuple(d) for d in data.get("dangers", [])]
 
     def to_data(self) -> dict:
         return {"blocked": [[list(c), n] for c, n in self.blocked.items()],
+                "solid": [list(c) for c in self.solid],
                 "dangers": [list(d) for d in self.dangers]}
 
     @staticmethod
@@ -41,18 +46,36 @@ class TerrainMap:
         return (cell[0] + 0.5) * CELL, (cell[1] + 0.5) * CELL
 
     def is_blocked(self, cell: tuple[int, int]) -> bool:
-        return self.blocked.get(cell, 0) >= BLOCK_SCORE
+        return cell in self.solid or self.blocked.get(cell, 0) >= BLOCK_SCORE
 
-    def mark_blocked(self, x: float, y: float, strength: int = 1) -> bool:
-        """Something is in the way at (x, y). Returns True if the cell just became blocked."""
+    def mark_blocked(self, x: float, y: float, strength: int = 1, solid: bool = False) -> bool:
+        """Something is in the way at (x, y): seen (counts as a vote), or `solid` when the player
+        bumped into it or fell from there. Returns True if the cell just became blocked."""
         cell = self.cell(x, y)
         before = self.is_blocked(cell)
-        self.blocked[cell] = min(self.blocked.get(cell, 0) + strength, 10)
+        if solid:
+            self.solid.add(cell)
+        self.blocked[cell] = min(self.blocked.get(cell, 0) + strength, 10 if solid else max(SIGHT_CAP, strength))
         return not before and self.is_blocked(cell)
 
     def mark_free(self, x: float, y: float) -> None:
         """The player stands there: it is not blocked, whatever was thought before."""
-        self.blocked.pop(self.cell(x, y), None)
+        cell = self.cell(x, y)
+        self.blocked.pop(cell, None)
+        self.solid.discard(cell)
+
+    def _seen_clear(self, x: float, y: float, angle: float, reach: float) -> None:
+        """Nothing seen in that direction: cells seen in the way before lose a vote."""
+        steps = int((reach - CLEAR_FROM) / (CELL / 2)) + 1
+        cos, sin = math.cos(angle), math.sin(angle)
+        cells = {self.cell(x + (CLEAR_FROM + k * CELL / 2) * cos, y + (CLEAR_FROM + k * CELL / 2) * sin)
+                 for k in range(steps)}
+        for cell in cells - self.solid:
+            votes = self.blocked.get(cell, 0)
+            if votes > 1:
+                self.blocked[cell] = min(votes, SIGHT_CAP) - 1
+            elif votes:
+                del self.blocked[cell]
 
     def mark_danger(self, x: float, y: float) -> None:
         self.dangers.append((x, y))
@@ -62,13 +85,16 @@ class TerrainMap:
         return sum(1 for dx, dy in self.dangers if math.hypot(x - dx, y - dy) < DANGER_RADIUS)
 
     def note_sight(self, x: float, y: float, facing: float, bearings, distances, drops,
-                   drop_ahead: float = DROP_AHEAD) -> bool:
+                   drop_ahead: float = DROP_AHEAD, reach: float = 12.0) -> bool:
         """Put on the map what is seen from (x, y): per direction (degrees from `facing`), the
-        distance of what is in the way (None: nothing) and whether the ground falls away.
+        distance of what is in the way (None: nothing within `reach`) and whether the ground falls
+        away. A direction seen clear frees what was wrongly seen there before.
         True if a cell just became blocked."""
         changed = False
         for bearing, distance, drop in zip(bearings, distances, drops):
             angle = math.radians(facing + bearing)
+            if distance is None and not drop:
+                self._seen_clear(x, y, angle, reach)
             for d in ([distance] if distance is not None else []) + ([drop_ahead] if drop else []):
                 changed |= self.mark_blocked(x + d * math.cos(angle), y + d * math.sin(angle))
         return changed
@@ -111,12 +137,16 @@ class TerrainMap:
         y0 = math.floor((min(start[1], goal[1]) - SEARCH_MARGIN) / CELL)
         y1 = math.floor((max(start[1], goal[1]) + SEARCH_MARGIN) / CELL)
 
+        walls = {c for c, votes in self.blocked.items() if votes >= BLOCK_SCORE} | self.solid
+        by_walls = {(c[0] + dx, c[1] + dy) for c in walls for dx in (-1, 0, 1) for dy in (-1, 0, 1)}
+        danger_costs: dict[tuple[int, int], float] = {}
+
         def cost(c: tuple[int, int]) -> float:
-            extra = 0.0
-            if any(self.is_blocked((c[0] + dx, c[1] + dy)) for dx in (-1, 0, 1) for dy in (-1, 0, 1)):
-                extra += WALL_MARGIN_COST
+            extra = WALL_MARGIN_COST if c in by_walls else 0.0
             if self.dangers:
-                extra += DANGER_COST * self.danger_near(*self.centre(c))
+                if c not in danger_costs:
+                    danger_costs[c] = DANGER_COST * self.danger_near(*self.centre(c))
+                extra += danger_costs[c]
             return extra
 
         def h(c: tuple[int, int]) -> float:
@@ -136,9 +166,9 @@ class TerrainMap:
                     n = (c[0] + dx, c[1] + dy)
                     if (dx == dy == 0) or not (x0 <= n[0] <= x1 and y0 <= n[1] <= y1):
                         continue
-                    if self.is_blocked(n) and n != g:
+                    if n in walls and n != g:
                         continue
-                    if dx and dy and (self.is_blocked((c[0] + dx, c[1])) or self.is_blocked((c[0], c[1] + dy))):
+                    if dx and dy and ((c[0] + dx, c[1]) in walls or (c[0], c[1] + dy) in walls):
                         continue  # don't cut a blocked corner
                     step = math.hypot(dx, dy) + cost(n)
                     if best.get(n, math.inf) > best[c] + step:

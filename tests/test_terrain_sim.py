@@ -8,7 +8,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "real_game"))
 
 from config import KEYS  # noqa: E402
-from terrain_sim import (BEARINGS, COLUMNS, FEATURES, SIZE, STUCK_STEPS, WalkEnv,  # noqa: E402
+from terrain_sim import (BEARINGS, COLUMNS, FEATURES, SAFE_FALL, SIZE, STUCK_STEPS, WalkEnv,  # noqa: E402
                          greedy_action)
 
 FLAT = np.zeros((SIZE, SIZE), dtype=np.float32)
@@ -75,6 +75,35 @@ class WalkEnvTest(unittest.TestCase):
         self.assertTrue(walk(env, [0, 0, 0])[-1]["bumped"])
         walk(env, [5])
         self.assertGreaterEqual(env.x, 66)
+
+    def test_every_kind_of_landscape_has_a_goal_that_can_be_reached(self):
+        from landscapes import KINDS
+        from terrain_sim import reachable
+
+        env = WalkEnv()
+        for k, kind in enumerate(KINDS):
+            env.reset(seed=k, options={"kind": kind})
+            self.assertEqual(env.kind, kind)
+            start = (int(env.x), int(env.y))
+            self.assertTrue(reachable(env.h, start)[int(env.goal[1]), int(env.goal[0])], kind)
+
+    def test_going_down_starts_high_above_the_goal(self):
+        env = WalkEnv()
+        higher = 0
+        for seed in range(6):
+            env.reset(seed=seed, options={"kind": "descent"})
+            higher += env.z - env.height(*env.goal) > SAFE_FALL
+        self.assertGreaterEqual(higher, 5)
+
+    def test_a_thin_wall_cannot_be_walked_through(self):
+        h = FLAT.copy()
+        h[:, 66] = 6.0  # one metre thick
+        env = WalkEnv(noise=False, terrain=h)
+        env.reset(seed=0, options={"start": (64, 64), "goal": (90.5, 64.5), "facing": 0.0})
+        for x0 in (64.3, 64.7, 65.1):
+            env.x = x0
+            walk(env, [0, 0, 5, 0])
+            self.assertLess(env.x, 66)
 
     def test_columns_match_the_real_view(self):
         from perception import View

@@ -1,4 +1,4 @@
-"""A small simulated landscape to teach the AI to walk: hills, cliffs, rocks, ravines.
+"""Simulated landscapes to teach the AI to walk: hills, cliffs, walls, ravines, forests...
 
 Thousands of walks per minute, with the same senses as in the real game: what the
 depth analysis reports for 15 directions (in the way or not, how far, ground
@@ -14,9 +14,9 @@ from collections import deque
 import gymnasium as gym
 import numpy as np
 
-from navigation import BLOCK_SCORE, MEMORY_REACH, TerrainMap
+from landscapes import SIZE, Landscape, make_landscape
+from navigation import BLOCK_SCORE, CELL, MEMORY_REACH, TerrainMap
 
-SIZE = 128  # metres; one height per square metre
 DT = 0.2  # seconds per decision
 SPEED = 5.0  # metres per second, walking (calibrated: 5.03)
 STEP_UP = 0.6  # metres the character walks up in one step (1 m) without jumping
@@ -35,10 +35,15 @@ ACTIONS = ("avancer", "avancer à gauche", "avancer à droite",
            "tourner à gauche", "tourner à droite", "sauter en avançant")
 FORWARD_ACTIONS = (0, 1, 2, 5)
 GOAL_REACHED = 2.5
-MAX_STEPS = 400
+WAYPOINT_REACHED = 2.5  # as moves.WAYPOINT_REACHED
+MAX_STEPS = 500
+FALL_COST = 0.3  # reward lost per point of health lost falling
+DEATH_COST = 50.0
 STALE_VIEW = 0.3  # chance that the eyes have nothing new this step (the real depth model is slower)
 JUMP_COST = 0.05  # jumping for nothing looks odd: only when it helps
 STUCK_STEPS = 3  # bumping this many steps in a row (0.6 s) is noticed, as in the real game
+GOAL_RANGE = {"general": (25, 70), "forest": (25, 70)}  # metres to the goal; other kinds: SPECIAL_RANGE
+SPECIAL_RANGE = (25, 110)
 
 
 def column_bearings() -> np.ndarray:
@@ -82,25 +87,6 @@ def features(blocked, near, drops, remembered, goal_bearing: float, goal_distanc
 FEATURES = len(features([0] * COLUMNS, [0] * COLUMNS, [0] * COLUMNS, [0] * COLUMNS, 0, 0, 100, False, 0))
 
 
-def make_terrain(rng: np.random.Generator, size: int = SIZE) -> np.ndarray:
-    """Gentle hills, plateaus with cliffs, ravines and rocks."""
-    y, x = np.mgrid[0:size, 0:size].astype(np.float32)
-    h = np.zeros((size, size), dtype=np.float32)
-    for _ in range(rng.integers(3, 7)):
-        cx, cy, spread, height = rng.uniform(0, size), rng.uniform(0, size), rng.uniform(10, 30), rng.uniform(-4, 6)
-        h += height * np.exp(-((x - cx) ** 2 + (y - cy) ** 2) / (2 * spread ** 2))
-    for _ in range(rng.integers(2, 6)):  # plateaus: walls to go round
-        cx, cy, radius = rng.uniform(0, size), rng.uniform(0, size), rng.uniform(5, 18)
-        h += rng.uniform(3, 12) * (((x - cx) ** 2 + (y - cy) ** 2) < radius ** 2)
-    for _ in range(rng.integers(0, 3)):  # ravines: drops to stay away from
-        cx, cy, radius = rng.uniform(0, size), rng.uniform(0, size), rng.uniform(4, 12)
-        h -= rng.uniform(6, 20) * (((x - cx) ** 2 + (y - cy) ** 2) < radius ** 2)
-    for _ in range(rng.integers(8, 26)):  # rocks and trunks
-        cx, cy, half = rng.uniform(0, size), rng.uniform(0, size), rng.uniform(0.5, 2.5)
-        h += rng.uniform(2, 4) * ((np.abs(x - cx) < half) & (np.abs(y - cy) < half))
-    return h
-
-
 def reachable(h: np.ndarray, start: tuple[int, int]) -> np.ndarray:
     """Cells the character can walk to from `start` without getting hurt."""
     size = h.shape[0]
@@ -118,8 +104,33 @@ def reachable(h: np.ndarray, start: tuple[int, int]) -> np.ndarray:
     return seen
 
 
+def place(land: Landscape, rng: np.random.Generator, tries: int = 3):
+    """A start (cell) on flat ground in the start zone, and a goal (metres) the character can walk
+    to from there without getting hurt. None if this landscape has none."""
+    h = land.h
+    padded = np.pad(h, 1, mode="edge")
+    around = np.stack([padded[1 + dy:SIZE + 1 + dy, 1 + dx:SIZE + 1 + dx] for dy in (-1, 0, 1) for dx in (-1, 0, 1)])
+    inside = np.zeros((SIZE, SIZE), dtype=bool)
+    inside[10:-10, 10:-10] = True
+    sy, sx = np.nonzero(land.start_zone & inside & (around.max(axis=0) - around.min(axis=0) < 0.7))
+    low, high = GOAL_RANGE.get(land.kind, SPECIAL_RANGE)
+    for _ in range(tries if len(sx) else 0):
+        pick = int(rng.integers(len(sx)))
+        start = (int(sx[pick]), int(sy[pick]))
+        gy, gx = np.nonzero(reachable(h, start) & land.goal_zone)
+        far = np.hypot(gx - start[0], gy - start[1])
+        choice = np.nonzero((far >= low) & (far <= high))[0]
+        if len(choice):
+            pick = int(rng.choice(choice))
+            return start, (gx[pick] + 0.5, gy[pick] + 0.5)
+    return None
+
+
 class WalkEnv(gym.Env):
-    """Reach a goal 25 to 70 m away across rough ground, without falling or getting stuck."""
+    """Reach a goal 25 to 110 m away across rough ground, without falling or getting stuck.
+    As in the real game, the learnt map and A* give the next waypoint; the walker decides how
+    to get there, and is rewarded for shortening the way left.
+    options: kind (see landscapes.KINDS), start (cell), goal (metres), facing (degrees)."""
 
     metadata = {"render_modes": []}
 
@@ -141,6 +152,20 @@ class WalkEnv(gym.Env):
 
     def goal_distance(self) -> float:
         return math.hypot(self.goal[0] - self.x, self.goal[1] - self.y)
+
+    # The way, as in the real game: the learnt map and A* give the next waypoint ------------
+
+    def replan(self) -> None:
+        self.route = self.map.plan((self.x, self.y), self.goal) or [self.goal]
+
+    def follow_route(self) -> None:
+        while len(self.route) > 1 and math.hypot(self.route[0][0] - self.x, self.route[0][1] - self.y) < WAYPOINT_REACHED:
+            self.route.pop(0)
+
+    def to_go(self) -> float:
+        """Metres left along the route: what the walker is rewarded for shortening."""
+        points = [(self.x, self.y), *self.route]
+        return sum(math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(points, points[1:]))
 
     def look(self):
         """What the depth analysis would report: per column, metres to what is in the way
@@ -170,28 +195,37 @@ class WalkEnv(gym.Env):
     def observe(self) -> np.ndarray:
         if self.sight is None or not (self.noise and self.np_random.random() < STALE_VIEW):
             self.sight = self.look()
-            self.map.note_sight(self.x, self.y, self.facing, BEARINGS, *self.sight)
+            if self.map.note_sight(self.x, self.y, self.facing, BEARINGS, *self.sight, reach=TRUST) and \
+                    not self.map.route_is_clear((self.x, self.y), self.route[:2], self.goal):
+                self.replan()
+        self.follow_route()
         distances, drops = self.sight
+        target = self.route[0]
+        bearing = math.degrees(math.atan2(target[1] - self.y, target[0] - self.x)) - self.facing
         return features([d is not None for d in distances], [nearness(d) for d in distances], drops,
-                        recalled(self.map, self.x, self.y, self.facing), self.goal_bearing(),
-                        self.goal_distance(), self.hp, self.stuck >= STUCK_STEPS, self.previous)
+                        recalled(self.map, self.x, self.y, self.facing), (bearing + 180) % 360 - 180,
+                        math.hypot(target[0] - self.x, target[1] - self.y), self.hp, self.stuck >= STUCK_STEPS,
+                        self.previous)
 
     # Gym ---------------------------------------------------------------------------------
 
     def reset(self, *, seed: int | None = None, options: dict | None = None):
         super().reset(seed=seed)
         rng = self.np_random
-        while True:
-            self.h = self.fixed_terrain if self.fixed_terrain is not None else make_terrain(rng)
-            start = (int(rng.integers(10, SIZE - 10)), int(rng.integers(10, SIZE - 10)))
-            ok = reachable(self.h, start)
-            gy, gx = np.nonzero(ok)
-            far = np.hypot(gx - start[0], gy - start[1])
-            choice = np.nonzero((far >= 25) & (far <= 70))[0]
-            if len(choice):
-                pick = int(rng.choice(choice))
-                self.goal = (gx[pick] + 0.5, gy[pick] + 0.5)
+        options = options or {}
+        for attempt in range(40):
+            if self.fixed_terrain is not None:
+                every = np.ones((SIZE, SIZE), dtype=bool)
+                land = Landscape("general", self.fixed_terrain, every, every)
+            else:
+                land = make_landscape(rng, options.get("kind") if attempt < 30 else "general")
+            placed = place(land, rng)
+            if placed:
                 break
+        else:
+            raise RuntimeError("no landscape with a goal that can be reached")
+        self.kind, self.h = land.kind, land.h
+        start, self.goal = placed
         if options and "start" in options:
             start = options["start"]
         if options and "goal" in options:
@@ -204,12 +238,18 @@ class WalkEnv(gym.Env):
         self.turn_scale = rng.uniform(0.8, 1.2) if self.noise else 1.0
         self.hp, self.steps, self.stuck, self.previous = 100.0, 0, 0, 0
         self.map = TerrainMap()
+        cells = int(SIZE / CELL)
+        for i in range(-1, cells + 1):  # the edge of the simulated world: known from the start
+            for cell in ((i, -1), (i, cells), (-1, i), (cells, i)):
+                self.map.solid.add(cell)
         self.sight = None
+        self.route = [self.goal]
+        self.replan()
         return self.observe(), {}
 
     def step(self, action):
         action = int(action)
-        before = self.goal_distance()
+        before = self.to_go()
         reward, terminated = -0.02, False
         turn = {1: -STEER, 2: STEER, 3: -TURN, 4: TURN}.get(action, 0.0)
         self.facing = (self.facing + turn * self.turn_scale + 180) % 360 - 180
@@ -218,29 +258,34 @@ class WalkEnv(gym.Env):
             nx = self.x + self.speed * DT * math.cos(math.radians(self.facing))
             ny = self.y + self.speed * DT * math.sin(math.radians(self.facing))
             rise = self.height(nx, ny) - self.z
-            if rise > (JUMP_UP if action == 5 else STEP_UP) or not (1 <= nx < SIZE - 1 and 1 <= ny < SIZE - 1):
+            highest = max(self.height(self.x + (nx - self.x) * f, self.y + (ny - self.y) * f) for f in (0.25, 0.5, 0.75))
+            if max(rise, highest - self.z) > (JUMP_UP if action == 5 else STEP_UP) or \
+                    not (1 <= nx < SIZE - 1 and 1 <= ny < SIZE - 1):
                 bumped = True
             else:
                 if -rise > SAFE_FALL:
                     fell = True
-                    self.map.mark_blocked(self.x, self.y, strength=BLOCK_SCORE)  # the edge it fell from
+                    self.map.mark_blocked(self.x, self.y, strength=BLOCK_SCORE, solid=True)  # the edge it fell from
                     harm = 100.0 * (-rise - SAFE_FALL) / (DEADLY_FALL - SAFE_FALL)
                     self.hp -= harm
-                    reward -= 0.1 * harm
+                    reward -= FALL_COST * min(harm, 100.0)
                 self.x, self.y, self.z = nx, ny, self.height(nx, ny)
                 self.map.mark_free(self.x, self.y)
         self.stuck = self.stuck + 1 if bumped else 0
         if self.stuck == STUCK_STEPS:  # noticed being stuck: as in the real game, the spot ahead goes on the map
             ahead = math.radians(self.facing)
-            self.map.mark_blocked(self.x + 1.5 * math.cos(ahead), self.y + 1.5 * math.sin(ahead), strength=BLOCK_SCORE)
+            self.map.mark_blocked(self.x + 1.5 * math.cos(ahead), self.y + 1.5 * math.sin(ahead), strength=BLOCK_SCORE, solid=True)
+        if fell or self.stuck == STUCK_STEPS:
+            self.replan()
         if bumped:
             reward -= 0.1
         if action == 5:
             reward -= JUMP_COST
+        observation = self.observe()  # may find a new route
         after = self.goal_distance()
-        reward += 0.5 * (before - after)
+        reward += 0.5 * (before - self.to_go())
         if self.hp <= 0:
-            reward -= 20.0
+            reward -= DEATH_COST
             terminated = True
         elif after <= GOAL_REACHED:
             reward += 10.0
@@ -248,20 +293,21 @@ class WalkEnv(gym.Env):
         self.steps += 1
         self.previous = action
         truncated = not terminated and self.steps >= MAX_STEPS
-        info = {"reached": after <= GOAL_REACHED, "dead": self.hp <= 0, "fell": fell, "bumped": bumped}
-        return self.observe(), reward, terminated, truncated, info
+        info = {"reached": after <= GOAL_REACHED, "dead": self.hp <= 0, "fell": fell, "bumped": bumped,
+                "kind": self.kind}
+        return observation, reward, terminated, truncated, info
 
 
 def greedy_action(obs: np.ndarray) -> int:
     """A simple hand-written walker, to compare with: head for the goal, go round what is in the way
     by turning one way and following it."""
-    blocked = obs[:COLUMNS]
+    near = obs[COLUMNS:2 * COLUMNS]
     drops = obs[2 * COLUMNS:3 * COLUMNS]
     remembered = obs[3 * COLUMNS:4 * COLUMNS]
     sin_b, cos_b = obs[4 * COLUMNS], obs[4 * COLUMNS + 1]
     previous = int(np.argmax(obs[-len(ACTIONS):]))
     bearing = math.degrees(math.atan2(sin_b, cos_b))
-    danger = np.maximum(np.maximum(blocked, drops), remembered > 0)
+    danger = (near > 0.35) | (drops > 0) | (remembered > 0)  # in the way within about 10 m
     middle = COLUMNS // 2
     if danger[middle - 2:middle + 3].max():  # in the way: keep turning the same way
         if previous in (3, 4):

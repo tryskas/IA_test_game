@@ -80,7 +80,7 @@ Entraîner sans l'étape d'imitation, par essais-erreurs uniquement :
 python train.py --sans-imitation
 ```
 
-Apprendre à l'IA à marcher en terrain accidenté (falaises, ravins, rochers) pour le vrai jeu, environ 30 min. Le meilleur marcheur est enregistré dans `models/marche.zip` (voir le guide) :
+Apprendre à l'IA à marcher en terrain accidenté (murs, falaises à descendre, canyons, forêts...) pour le vrai jeu, environ une heure. Le meilleur marcheur est enregistré dans `models/marche.zip` (voir le guide) :
 
 ```bash
 python train_walk.py

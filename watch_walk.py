@@ -6,9 +6,11 @@
 Seen from above: hills and plateaus (green to brown), too steep to walk (dark),
 ravines (blue). The 15 lines in front of the walker are what
 its eyes report: red where something is in the way, orange dots where the ground
-falls away. Purple squares are what its map remembers; red edges are where a fall hurts.
+falls away. Purple squares are what its map remembers, the thin white line the way A*
+works out on that map; red edges are where a fall hurts.
 
-Keys: space pause, N new landscape, 1 AI, 2 simple rule, 3 random, + / - speed, Esc quit.
+Keys: space pause, N new landscape, P kind of landscape (all, or one of the traps),
+1 AI, 2 simple rule, 3 random, + / - speed, Esc quit.
 """
 from __future__ import annotations
 
@@ -23,10 +25,11 @@ sys.path.insert(0, str(ROOT / "real_game"))
 import numpy as np  # noqa: E402
 import pygame  # noqa: E402
 
+from landscapes import KINDS  # noqa: E402
 from navigation import CELL  # noqa: E402
 from navigation import DROP_AHEAD  # noqa: E402
 from terrain_sim import (ACTIONS, BEARINGS, DT, GOAL_REACHED, SAFE_FALL, SIGHT, SIZE, STEP_UP,  # noqa: E402
-                         WalkEnv, greedy_action)
+                         WalkEnv, greedy_action, reachable)
 
 SCALE = 7  # pixels per metre
 MAP = SIZE * SCALE
@@ -38,7 +41,7 @@ MEMORY = (190, 80, 230)
 BACKGROUND, TEXT, DIM = (24, 26, 30), (235, 235, 235), (150, 155, 165)
 
 
-def terrain_image(h: np.ndarray) -> pygame.Surface:
+def terrain_image(h: np.ndarray, start: tuple[int, int]) -> pygame.Surface:
     """Colours by height, light from the top left, dark lines where it is too steep to walk,
     red on edges where falling hurts."""
     levels = [lv for lv, _ in HEIGHT_COLOURS]
@@ -49,7 +52,7 @@ def terrain_image(h: np.ndarray) -> pygame.Surface:
     rgb[np.hypot(gx, gy) > STEP_UP] *= 0.35
     padded = np.pad(h, 1, mode="edge")
     lowest = np.minimum.reduce([padded[:-2, 1:-1], padded[2:, 1:-1], padded[1:-1, :-2], padded[1:-1, 2:]])
-    rgb[h - lowest > SAFE_FALL] = (220, 40, 45)  # falling from here hurts
+    rgb[(h - lowest > SAFE_FALL) & reachable(h, start)] = (220, 40, 45)  # can get there, and falling from here hurts
     image = np.clip(rgb, 0, 255).astype(np.uint8).transpose(1, 0, 2)  # pygame wants (x, y)
     return pygame.transform.scale(pygame.surfarray.make_surface(image), (MAP, MAP))
 
@@ -69,6 +72,7 @@ class Viewer:
         self.walker = None
         self.player = self.choose(player)
         self.seed = seed
+        self.kind: str | None = None  # None: every kind, mixed as in training
         self.steps_per_s = 10.0  # 5 = real time
         self.paused = False
         self.totals = {"essais": 0, "arrivées": 0, "chutes": 0, "morts": 0}
@@ -86,9 +90,9 @@ class Viewer:
         return player
 
     def new_landscape(self) -> None:
-        self.obs, _ = self.env.reset(seed=self.seed)
+        self.obs, _ = self.env.reset(seed=self.seed, options={"kind": self.kind} if self.kind else None)
         self.seed += 1
-        self.background = terrain_image(self.env.h)
+        self.background = terrain_image(self.env.h, (int(self.env.x), int(self.env.y)))
         self.trail = [(self.env.x, self.env.y)]
         self.start = (self.env.x, self.env.y)
         self.result, self.result_at, self.fall_at, self.action = None, 0.0, -10.0, 0
@@ -131,6 +135,11 @@ class Viewer:
                 win.blit(memory, screen(cell[0] * CELL, cell[1] * CELL))
         if len(self.trail) > 1:
             pygame.draw.lines(win, (40, 110, 240), False, [screen(*p) for p in self.trail], 3)
+        route = [screen(env.x, env.y)] + [screen(*p) for p in env.route]  # the way A* works out on its map
+        for a, b in zip(route, route[1:]):
+            pygame.draw.line(win, (255, 255, 255), a, b, 1)
+        for point in route[1:-1]:
+            pygame.draw.circle(win, (255, 255, 255), point, 3)
         pygame.draw.circle(win, (40, 170, 80), screen(*self.start), 7)
         goal = screen(*env.goal)
         pygame.draw.circle(win, (250, 200, 30), goal, int(GOAL_REACHED * SCALE), 3)
@@ -162,16 +171,18 @@ class Viewer:
         env, x = self.env, MAP + 18
         pygame.draw.rect(self.window, BACKGROUND, (MAP, 0, PANEL, MAP))
         self.text(f"Marcheur : {PLAYERS[self.player]}", (x, 18), font=self.big)
-        self.text(f"Paysage n° {self.seed - 1}    temps {env.steps * DT:5.1f} s", (x, 56))
-        self.text(f"Vitesse : x{self.steps_per_s * DT:.0f}" + ("   (pause)" if self.paused else ""), (x, 80), DIM)
-        self.text("Vie", (x, 112))
-        pygame.draw.rect(self.window, (70, 70, 75), (x + 40, 114, 240, 16))
+        self.text(f"{KINDS[env.kind][0]}  (n° {self.seed - 1})", (x, 56), (250, 200, 30))
+        self.text(f"Temps {env.steps * DT:5.1f} s    paysages : {'tous' if self.kind is None else 'celui-ci'}",
+                  (x, 80), DIM)
+        self.text(f"Vitesse : x{self.steps_per_s * DT:.0f}" + ("   (pause)" if self.paused else ""), (x, 104), DIM)
+        self.text("Vie", (x, 132))
+        pygame.draw.rect(self.window, (70, 70, 75), (x + 40, 134, 240, 16))
         pygame.draw.rect(self.window, (90, 210, 120) if env.hp > 50 else (230, 80, 60),
-                         (x + 40, 114, int(240 * max(env.hp, 0) / 100), 16))
-        self.text(f"Geste : {ACTIONS[self.action]}", (x, 142))
-        self.text(f"But à {env.goal_distance():.0f} m", (x, 166))
+                         (x + 40, 134, int(240 * max(env.hp, 0) / 100), 16))
+        self.text(f"Geste : {ACTIONS[self.action]}    but à {env.goal_distance():.0f} m", (x, 162))
+        self.text(f"Chemin prévu : {env.to_go():.0f} m", (x, 180), DIM)
 
-        self.text("Ce que voient ses yeux :", (x, 204))
+        self.text("Ce que voient ses yeux :", (x, 206))
         distances, drops = env.sight if env.sight else ([None] * len(BEARINGS), [False] * len(BEARINGS))
         recalled = env.map.blocked_ahead(env.x, env.y, env.facing, BEARINGS)
         for i, (distance, drop, memory) in enumerate(zip(distances, drops, recalled)):
@@ -193,17 +204,18 @@ class Viewer:
         self.text(f"Essais {t['essais']}   arrivées {t['arrivées']}", (x, 346))
         self.text(f"Chutes {t['chutes']}   morts {t['morts']}", (x, 370))
 
-        legend = [((40, 110, 240), "trajet"), ((250, 200, 30), "but"), ((235, 50, 50), "obstacle vu"),
+        legend = [((40, 110, 240), "trajet"), ((255, 255, 255), "chemin prévu sur sa carte (A*)"),
+                  ((250, 200, 30), "but"), ((235, 50, 50), "obstacle vu"),
                   ((255, 150, 30), "le sol se dérobe"), (MEMORY, "retenu sur sa carte"),
                   ((220, 40, 45), "bord : chute de plus de 4 m"), ((40, 40, 40), "trop raide pour marcher"),
                   ((60, 110, 200), "fond de ravin")]
         for k, (colour, words) in enumerate(legend):
             pygame.draw.rect(self.window, colour, (x, 420 + 24 * k, 16, 16))
             self.text(words, (x + 26, 419 + 24 * k), DIM)
-        keys = ["Espace : pause      N : autre paysage", "1 : IA   2 : règle simple   3 : hasard",
-                "+ / - : vitesse      Échap : quitter"]
+        keys = ["Espace : pause      N : autre paysage", "P : choisir la sorte de paysage",
+                "1 : IA   2 : règle simple   3 : hasard", "+ / - : vitesse      Échap : quitter"]
         for k, words in enumerate(keys):
-            self.text(words, (x, MAP - 84 + 24 * k), DIM)
+            self.text(words, (x, MAP - 108 + 24 * k), DIM)
 
     # Loop ----------------------------------------------------------------------------
 
@@ -221,6 +233,10 @@ class Viewer:
                     if event.key == pygame.K_SPACE:
                         self.paused = not self.paused
                     elif event.key == pygame.K_n:
+                        self.new_landscape()
+                    elif event.key == pygame.K_p:  # all kinds, then each kind in turn
+                        kinds = [None, *KINDS]
+                        self.kind = kinds[(kinds.index(self.kind) + 1) % len(kinds)]
                         self.new_landscape()
                     elif event.unicode in ("1", "2", "3"):
                         self.player = self.choose(("ia", "regle", "hasard")[int(event.unicode) - 1])
@@ -246,8 +262,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--joueur", choices=list(PLAYERS), default="ia")
     parser.add_argument("--graine", type=int, default=10_000, help="premier paysage")
+    parser.add_argument("--paysage", choices=list(KINDS), help="une seule sorte de paysage (par défaut : toutes)")
     args = parser.parse_args()
-    Viewer(args.joueur, args.graine).run()
+    viewer = Viewer(args.joueur, args.graine)
+    if args.paysage:
+        viewer.kind = args.paysage
+        viewer.new_landscape()
+    viewer.run()
     pygame.quit()
 
 
