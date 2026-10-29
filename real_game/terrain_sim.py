@@ -15,11 +15,12 @@ import gymnasium as gym
 import numpy as np
 
 from landscapes import SIZE, Landscape, make_landscape
-from navigation import BLOCK_SCORE, CELL, EDGE_SEEN, MEMORY_REACH, TerrainMap
+from navigation import BLOCK_SCORE, CELL, EDGE_SEEN, GUARD_RUN, GUARD_WALK, MEMORY_REACH, TerrainMap
 
 DT = 0.2  # seconds per decision
 SPEED = 5.0  # metres per second, walking (calibrated: 5.03)
-STEP_UP = 0.6  # metres the character walks up in one step (1 m) without jumping
+RUN_SPEED = 9.0  # metres per second, running (shift held)
+STEP_UP = 0.6  # metres the ground may rise at once for the character to walk on without jumping
 JUMP_UP = 1.4  # metres it gets up by jumping
 SAFE_FALL = 4.0  # falls up to this height do no harm
 DEADLY_FALL = 14.0  # falls from this height kill
@@ -33,8 +34,11 @@ EDGE_FAR = 10.0  # an edge this far would read as 0
 STEEP_UP, STEEP_DOWN = STEP_UP, -2.0  # height change over one metre that shows as a wall / an edge
 STEER, TURN = 15.0, 35.0  # degrees: steering while walking, turning on the spot
 ACTIONS = ("avancer", "avancer à gauche", "avancer à droite",
-           "tourner à gauche", "tourner à droite", "sauter en avançant")
-FORWARD_ACTIONS = (0, 1, 2, 5)
+           "tourner à gauche", "tourner à droite", "sauter en avançant",
+           "courir", "courir à gauche", "courir à droite")
+FORWARD_ACTIONS = (0, 1, 2, 5, 6, 7, 8)
+RUN_ACTIONS = (6, 7, 8)
+TURNS = {1: -STEER, 2: STEER, 3: -TURN, 4: TURN, 7: -STEER, 8: STEER}  # degrees, + to the right
 GOAL_REACHED = 2.5
 WAYPOINT_REACHED = 2.5  # as moves.WAYPOINT_REACHED
 MAX_STEPS = 800  # 160 s: enough to walk along a whole cliff to find the way down
@@ -160,6 +164,28 @@ class WalkEnv(gym.Env):
     def goal_distance(self) -> float:
         return math.hypot(self.goal[0] - self.x, self.goal[1] - self.y)
 
+    def move(self, length: float, jump: bool) -> tuple[bool, float]:
+        """Go `length` metres ahead, a little at a time: stop against what is too high to step
+        (or jump) up, fall where the ground drops away. Returns (bumped, height fallen)."""
+        angle = math.radians(self.facing)
+        pieces = max(2, math.ceil(length / 0.25))
+        dx, dy = length / pieces * math.cos(angle), length / pieces * math.sin(angle)
+        jumped = False
+        for _ in range(pieces):
+            nx, ny = self.x + dx, self.y + dy
+            if not (1 <= nx < SIZE - 1 and 1 <= ny < SIZE - 1):
+                return True, 0.0
+            ground = self.height(nx, ny)
+            if ground - self.z > STEP_UP:
+                if not jump or jumped or ground - self.z > JUMP_UP:
+                    return True, 0.0
+                jumped = True
+            drop = self.z - ground
+            self.x, self.y, self.z = nx, ny, ground
+            if drop > SAFE_FALL:
+                return False, drop
+        return False, 0.0
+
     # The way, as in the real game: the learnt map and A* give the next waypoint ------------
 
     def replan(self) -> None:
@@ -251,6 +277,7 @@ class WalkEnv(gym.Env):
         self.facing = float(options["facing"]) if options and "facing" in options else float(rng.uniform(-180, 180))
         # The real game is never exactly the same: slightly different speed and turns
         self.speed = SPEED * (rng.uniform(0.9, 1.1) if self.noise else 1.0)
+        self.run_speed = RUN_SPEED * (rng.uniform(0.85, 1.1) if self.noise else 1.0)
         self.turn_scale = rng.uniform(0.8, 1.2) if self.noise else 1.0
         self.hp, self.steps, self.stuck, self.previous = 100.0, 0, 0, 0
         self.map = TerrainMap()
@@ -267,29 +294,24 @@ class WalkEnv(gym.Env):
         action = int(action)
         before = self.to_go()
         reward, terminated = -0.02, False
-        turn = {1: -STEER, 2: STEER, 3: -TURN, 4: TURN}.get(action, 0.0)
+        turn = TURNS.get(action, 0.0)
         self.facing = (self.facing + turn * self.turn_scale + 180) % 360 - 180
         bumped = fell = held = False
-        if action in FORWARD_ACTIONS and self.map.edge_ahead(self.x, self.y, self.facing):
+        running = action in RUN_ACTIONS
+        if action in FORWARD_ACTIONS and self.map.edge_ahead(self.x, self.y, self.facing,
+                                                             GUARD_RUN if running else GUARD_WALK):
             held = True  # the guard, as in the real game: no step onto a known edge
         elif action in FORWARD_ACTIONS:
-            nx = self.x + self.speed * DT * math.cos(math.radians(self.facing))
-            ny = self.y + self.speed * DT * math.sin(math.radians(self.facing))
-            rise = self.height(nx, ny) - self.z
-            highest = max(self.height(self.x + (nx - self.x) * f, self.y + (ny - self.y) * f) for f in (0.25, 0.5, 0.75))
-            if max(rise, highest - self.z) > (JUMP_UP if action == 5 else STEP_UP) or \
-                    not (1 <= nx < SIZE - 1 and 1 <= ny < SIZE - 1):
-                bumped = True
-            else:
-                if -rise > SAFE_FALL:
-                    fell = True
-                    self.map.mark_blocked(self.x, self.y, strength=BLOCK_SCORE, solid=True)  # the edge it fell from
-                    self.map.mark_edge(self.x, self.y, votes=4)
-                    harm = 100.0 * (-rise - SAFE_FALL) / (DEADLY_FALL - SAFE_FALL)
-                    self.hp -= harm
-                    reward -= FALL_PENALTY + FALL_COST * min(harm, 100.0)
-                self.x, self.y, self.z = nx, ny, self.height(nx, ny)
-                self.map.mark_free(self.x, self.y)
+            edge = (self.x, self.y)
+            bumped, drop = self.move((self.run_speed if running else self.speed) * DT, jump=action == 5)
+            if drop > SAFE_FALL:
+                fell = True
+                self.map.mark_blocked(*edge, strength=BLOCK_SCORE, solid=True)  # the edge it fell from
+                self.map.mark_edge(*edge, votes=4)
+                harm = 100.0 * (drop - SAFE_FALL) / (DEADLY_FALL - SAFE_FALL)
+                self.hp -= harm
+                reward -= FALL_PENALTY + FALL_COST * min(harm, 100.0)
+            self.map.mark_free(self.x, self.y)
         self.stuck = self.stuck + 1 if bumped else 0
         if self.stuck == STUCK_STEPS:  # noticed being stuck: as in the real game, the spot ahead goes on the map
             ahead = math.radians(self.facing)

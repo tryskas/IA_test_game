@@ -23,8 +23,10 @@ so does leaving the game window.
 from __future__ import annotations
 
 import argparse
+import math
 import time
 import urllib.error
+import warnings
 
 from common import find_game_window
 from config import FOV
@@ -35,6 +37,14 @@ from menus import Memory, Menus
 from moves import Calibration, Mover, SkillError, calibrate
 from planner import RAW, Plan, Step, next_step, parse_schematics
 from screen import Screen
+
+# Messages from the libraries the vision uses, harmless here, that would bury the AI's own
+warnings.filterwarnings("ignore", message=".*pin_memory.*")
+warnings.filterwarnings("ignore", message=".*quantize_per_tensor.*")
+warnings.filterwarnings("ignore", category=FutureWarning)
+
+BUILD_TRIES = 3  # no room for a building: go somewhere else this many times
+RELOCATE_M = 25.0  # metres walked to look for room elsewhere
 
 RESOURCES = {"fer": "iron_ore", "cuivre": "copper_ore", "calcaire": "limestone"}
 PLATE, ROD = "Desc_IronPlate_C", "Desc_IronRod_C"
@@ -81,10 +91,24 @@ def read_plan() -> Plan:
 
 
 def build(menus: Menus, key: str) -> None:
+    """Build it; if there is no room here, walk somewhere else (another direction each time) and
+    try again."""
     name, cost, spot = BUILDINGS[key]
     done = (lambda: hub_id() is not None) if key == "hub" else menus.spend_check(cost)
     print(f"[{stamp()}] Construction : {name}")
-    menus.build(name, done, spot)
+    for attempt in range(BUILD_TRIES):
+        try:
+            menus.build(name, done, spot)
+            return
+        except SkillError as problem:
+            if "emplacement" not in str(problem) or attempt == BUILD_TRIES - 1:
+                raise
+            mover = menus.mover
+            player = mover.raw.player()
+            direction = math.radians(mover.facing(player) + 120 * (attempt + 1))
+            print(f"  pas de place ici : je vais voir {RELOCATE_M:.0f} m plus loin")
+            mover.walk_to(player.x + RELOCATE_M * math.cos(direction), player.y + RELOCATE_M * math.sin(direction),
+                          radius=4.0, timeout=30)
 
 
 def start_of_game(menus: Menus, memory: Memory) -> None:

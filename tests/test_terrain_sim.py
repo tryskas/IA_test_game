@@ -8,8 +8,8 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "real_game"))
 
 from config import KEYS  # noqa: E402
-from terrain_sim import (BEARINGS, COLUMNS, FEATURES, SAFE_FALL, SIZE, STUCK_STEPS, WalkEnv,  # noqa: E402
-                         greedy_action)
+from terrain_sim import (ACTIONS, BEARINGS, COLUMNS, FEATURES, SAFE_FALL, SIZE, STUCK_STEPS,  # noqa: E402
+                         WalkEnv, greedy_action)
 
 FLAT = np.zeros((SIZE, SIZE), dtype=np.float32)
 
@@ -30,7 +30,7 @@ class WalkEnvTest(unittest.TestCase):
     def test_observation_has_the_shared_layout(self):
         obs, _ = WalkEnv().reset(seed=1)
         self.assertEqual(obs.shape, (FEATURES,))
-        self.assertEqual(FEATURES, 4 * COLUMNS + 3 + 2 + 6)
+        self.assertEqual(FEATURES, 4 * COLUMNS + 3 + 2 + len(ACTIONS))
 
     def test_simple_walker_crosses_flat_ground(self):
         env = WalkEnv(noise=False, terrain=FLAT)
@@ -118,6 +118,15 @@ class WalkEnvTest(unittest.TestCase):
             walk(env, [0, 0, 5, 0])
             self.assertLess(env.x, 66)
 
+    def test_running_goes_further_and_the_guard_looks_further(self):
+        env = WalkEnv(noise=False, terrain=FLAT)
+        env.reset(seed=0, options={"start": (40, 64), "goal": (90.5, 64.5), "facing": 0.0})
+        walk(env, [6])
+        self.assertAlmostEqual(env.x, 40.5 + 1.8, 5)
+        env.map.mark_edge(env.x + 2.6, env.y, votes=4)  # an edge 2.6 m ahead
+        self.assertTrue(walk(env, [6])[0]["held"])  # too near to run on
+        self.assertFalse(walk(env, [0])[0]["held"])  # a step walking is still fine
+
     def test_columns_match_the_real_view(self):
         from perception import View
 
@@ -148,7 +157,7 @@ class RealSensesTest(unittest.TestCase):
         self.assertAlmostEqual(math.degrees(math.atan2(goal[0], goal[1])), 90.0, 3)  # to the right
         self.assertEqual(obs[4 * COLUMNS + 3], 0.8)
         self.assertEqual(obs[4 * COLUMNS + 4], 1.0)
-        self.assertEqual(obs[-6 + 4], 1.0)
+        self.assertEqual(obs[-len(ACTIONS) + 4], 1.0)
 
     def test_blind_without_a_view(self):
         from navigation import TerrainMap

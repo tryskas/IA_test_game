@@ -267,7 +267,7 @@ L'IA analyse l'image du jeu en continu, quelques fois par seconde :
 
 **Gestes naturels** : la caméra tourne progressivement (elle accélère puis ralentit), la trajectoire est corrigée en marchant, l'inclinaison du regard est suivie et changée en douceur, et le curseur glisse dans les menus.
 
-**Combat** : l'IA se retourne d'abord (les attaques viennent souvent de derrière), fait face et frappe. Elle ne fuit que si sa vie passe sous 25 % pendant qu'elle est encore touchée. Une chute n'est pas prise pour une attaque. Après un combat, si sa vie est sous 60 %, elle rentre au HUB et attend qu'elle remonte.
+**Combat** : l'IA se retourne d'abord (les attaques viennent souvent de derrière), fait face et frappe, puis recule d'un pas pour esquiver la charge suivante. Si une créature la blesse de loin (un cracheur), elle fonce dessus pour la frapper, sauf si un bord est devant. Elle fuit si sa vie passe sous 35 % pendant qu'elle est encore touchée, en courant vers le HUB par un chemin sûr. Une chute n'est pas prise pour une attaque. Après un combat, si sa vie est sous 60 %, elle rentre au HUB et attend qu'elle remonte.
 
 Vérifie d'abord le **champ de vision** du jeu (Options > Vidéo) et reporte-le dans `real_game/config.py` (`FOV`, 90 par défaut). Il sert à transformer la position d'une créature à l'écran en angle.
 
@@ -294,7 +294,7 @@ Pour ne plus rester bloquée contre les falaises ni tomber, l'IA apprend à marc
 | Forêt dense | 8 % | se faufiler entre les arbres |
 | Terrasses | 12 % | descendre des gradins : certains sauts sont sans danger, d'autres font mal, des rampes les relient |
 
-Comme dans le vrai jeu, la carte apprise et l'A* donnent le prochain point du chemin, et la marche apprise décide comment y aller. La carte retient ce que les yeux voient. Une direction vue dégagée efface peu à peu une erreur des yeux. Une garde, la même en simulation et dans le vrai jeu, empêche tout pas en avant sur un bord connu de la carte : l'IA peut tourner, mais pas tomber de là. Une chute qui blesse coûte plus de points que n'importe quel raccourci n'en rapporte. Les yeux estiment à quelle distance le sol se dérobe, et le bord est placé à cet endroit sur la carte. Il n'est effacé que si, en regardant là où il devrait être visible (entre 3,5 et 7,6 m devant), le sol paraît sûr.
+Comme dans le vrai jeu, la carte apprise et l'A* donnent le prochain point du chemin, et la marche apprise décide comment y aller. La carte retient ce que les yeux voient. Une direction vue dégagée efface peu à peu une erreur des yeux. La carte retient aussi la hauteur du sol là où l'IA est passée : un rebord qu'elle a descendu n'est pas pris comme chemin pour remonter, elle cherche un autre passage. Une garde, la même en simulation et dans le vrai jeu, empêche tout pas en avant sur un bord connu de la carte : l'IA peut tourner, mais pas tomber de là. Une chute qui blesse coûte plus de points que n'importe quel raccourci n'en rapporte. Les yeux estiment à quelle distance le sol se dérobe, et le bord est placé à cet endroit sur la carte. Il n'est effacé que si, en regardant là où il devrait être visible (entre 3,5 et 7,6 m devant), le sol paraît sûr.
 
 Elle a les mêmes sens que dans le vrai jeu, toutes les 0,2 s :
 
@@ -302,7 +302,7 @@ Elle a les mêmes sens que dans le vrai jeu, toutes les 0,2 s :
 - ce que la carte apprise retient juste devant elle (obstacles et bords déjà vus) ;
 - la direction et la distance du prochain point du chemin, sa vie, et si elle est coincée.
 
-Elle choisit parmi 6 gestes : avancer, avancer en tournant à gauche ou à droite, tourner sur place à gauche ou à droite, sauter en avançant. Dans le vrai jeu, la carte et l'A* choisissent toujours le chemin. La marche apprise décide comment rejoindre le point suivant : contourner, sauter, s'arrêter avant un bord.
+Elle choisit parmi 9 gestes : avancer, avancer en tournant à gauche ou à droite, tourner sur place à gauche ou à droite, sauter en avançant, courir tout droit, à gauche ou à droite. Elle apprend à courir sur terrain dégagé et à marcher près des obstacles et des bords ; en courant, la garde regarde deux fois plus loin. Dans le vrai jeu, la carte et l'A* choisissent toujours le chemin. La marche apprise décide comment rejoindre le point suivant : contourner, sauter, s'arrêter avant un bord.
 
 Lance l'entraînement sur ton PC (environ une heure, le processeur suffit) :
 

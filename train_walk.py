@@ -28,7 +28,7 @@ from stable_baselines3.common.callbacks import BaseCallback  # noqa: E402
 from stable_baselines3.common.env_util import make_vec_env  # noqa: E402
 
 from landscapes import KINDS  # noqa: E402
-from terrain_sim import DT, WalkEnv, greedy_action  # noqa: E402
+from terrain_sim import ACTIONS, DT, WalkEnv, greedy_action  # noqa: E402
 from walk_policy import MODEL_FILE  # noqa: E402
 
 EVAL_SEED = 10_000  # evaluation landscapes, never seen while practising
@@ -127,7 +127,7 @@ def main() -> None:
 
     rng = np.random.default_rng(0)
     print("Pour comparer, sur 160 paysages (20 de chaque sorte) :")
-    simple = {"au hasard": evaluate(lambda obs: int(rng.integers(6))), "règle simple": evaluate(greedy_action)}
+    simple = {"au hasard": evaluate(lambda obs: int(rng.integers(len(ACTIONS)))), "règle simple": evaluate(greedy_action)}
     for name, result in simple.items():
         print(describe(name, result))
     if args.evaluer:

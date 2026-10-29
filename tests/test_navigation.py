@@ -90,6 +90,20 @@ class PlanTest(unittest.TestCase):
         terrain.note_sight(0, 0, 0, [0], [None], [None])  # where it should show: seen safe after all
         self.assertFalse(terrain.is_blocked(terrain.cell(6, 0)))
 
+    def test_a_ledge_walked_down_is_not_climbed_back(self):
+        terrain = TerrainMap()
+        for x in range(0, 22):
+            terrain.mark_free(x + 0.5, 0.5, 10.0)  # on top
+        for x in range(22, 41):
+            terrain.mark_free(x + 0.5, 0.5, 6.0)  # 4 m lower, after the ledge
+        top, bottom = terrain.cell(19, 0.5), terrain.cell(23, 0.5)
+        self.assertTrue(terrain.can_climb(top, bottom))  # going down: fine
+        self.assertFalse(terrain.can_climb(bottom, top))  # going back up: no
+        path = terrain.plan((40, 0.5), (0, 0.5))
+        self.assertTrue(any(abs(y - 0.5) > 1.5 for _, y in path[:-1]))  # not straight back up the ledge
+        again = TerrainMap(terrain.to_data())
+        self.assertFalse(again.can_climb(bottom, top))
+
 
 if __name__ == "__main__":
     unittest.main()

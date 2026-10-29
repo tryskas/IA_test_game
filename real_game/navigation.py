@@ -24,7 +24,9 @@ CLEAR_FROM = 3.5  # metres: a direction seen clear frees the cells from here to 
 # (nearer, the ground is hidden under the HUD: an edge there can't be seen, so it must not be forgotten)
 EDGE_SEEN = (3.5, 7.6)  # metres ahead where the eyes can tell the ground falls away (5° down)
 EDGE_VOTES = 2  # an edge is dangerous: blocked at the first sighting, until seen safe again
-GUARD_REACH = (0.75, 1.5)  # metres ahead checked before each step forward: never onto a known edge
+GUARD_WALK, GUARD_RUN = 1.5, 3.0  # metres ahead checked before each step forward, walking or running
+CLIMB = 2.2  # metres: a neighbouring cell whose ground is known to be this much higher can't be
+# climbed (a ledge; a walkable slope rises less over 2 m), though it can be walked down
 MEMORY_REACH = (1.5, 3.0, 4.5)  # metres ahead where the walker recalls what the map knows
 
 
@@ -34,12 +36,15 @@ class TerrainMap:
         self.blocked: dict[tuple[int, int], int] = {tuple(c): n for c, n in data.get("blocked", [])}
         self.edges: dict[tuple[int, int], int] = {tuple(c): n for c, n in data.get("edges", [])}  # ground falls away
         self.solid: set[tuple[int, int]] = {tuple(c) for c in data.get("solid", [])}  # known by bumping or falling
+        # lowest height where the player stood, per cell: the ground (in the air, it is higher)
+        self.levels: dict[tuple[int, int], float] = {tuple(c): z for c, z in data.get("levels", [])}
         self.dangers: list[tuple[float, float]] = [tuple(d) for d in data.get("dangers", [])]
 
     def to_data(self) -> dict:
         return {"blocked": [[list(c), n] for c, n in self.blocked.items()],
                 "edges": [[list(c), n] for c, n in self.edges.items()],
                 "solid": [list(c) for c in self.solid],
+                "levels": [[list(c), z] for c, z in self.levels.items()],
                 "dangers": [list(d) for d in self.dangers]}
 
     @staticmethod
@@ -65,12 +70,12 @@ class TerrainMap:
         self.edges[cell] = min(self.edges.get(cell, 0) + votes, SIGHT_CAP)
         return not before and self.is_blocked(cell)
 
-    def edge_ahead(self, x: float, y: float, facing: float) -> bool:
+    def edge_ahead(self, x: float, y: float, facing: float, reach: float = GUARD_WALK) -> bool:
         """Would a step forward go onto an edge the map knows? (The guard against falling.)"""
         angle = math.radians(facing)
         here = self.cell(x, y)
-        for d in GUARD_REACH:
-            cell = self.cell(x + d * math.cos(angle), y + d * math.sin(angle))
+        for k in range(1, int(reach / 0.75 + 1e-9) + 1):
+            cell = self.cell(x + 0.75 * k * math.cos(angle), y + 0.75 * k * math.sin(angle))
             if cell != here and self.edges.get(cell, 0) >= BLOCK_SCORE:
                 return True
         return False
@@ -85,12 +90,20 @@ class TerrainMap:
         self.blocked[cell] = min(self.blocked.get(cell, 0) + strength, 10 if solid else max(SIGHT_CAP, strength))
         return not before and self.is_blocked(cell)
 
-    def mark_free(self, x: float, y: float) -> None:
-        """The player stands there: it is not blocked, whatever was thought before."""
+    def mark_free(self, x: float, y: float, z: float | None = None) -> None:
+        """The player stands there: it is not blocked, whatever was thought before. `z`: the
+        player's height there."""
         cell = self.cell(x, y)
         self.blocked.pop(cell, None)
         self.edges.pop(cell, None)
         self.solid.discard(cell)
+        if z is not None:
+            self.levels[cell] = min(self.levels.get(cell, z), z)
+
+    def can_climb(self, a: tuple[int, int], b: tuple[int, int]) -> bool:
+        """Can the player go from cell a to cell b, as far as the heights known tell?"""
+        la, lb = self.levels.get(a), self.levels.get(b)
+        return la is None or lb is None or lb - la <= CLIMB
 
     def _ray(self, x: float, y: float, angle: float, start: float, end: float) -> set[tuple[int, int]]:
         """The cells from `start` to `end` metres in that direction."""
@@ -186,6 +199,7 @@ class TerrainMap:
         y1 = math.floor((max(start[1], goal[1]) + SEARCH_MARGIN) / CELL)
 
         walls = self.walls()
+        levels = self.levels
         by_walls = {(c[0] + dx, c[1] + dy) for c in walls for dx in (-1, 0, 1) for dy in (-1, 0, 1)}
         danger_costs: dict[tuple[int, int], float] = {}
 
@@ -216,6 +230,8 @@ class TerrainMap:
                         continue
                     if n in walls and n != g:
                         continue
+                    if levels and not self.can_climb(c, n):
+                        continue  # a ledge: fine to go down, not up
                     if dx and dy and ((c[0] + dx, c[1]) in walls or (c[0], c[1] + dy) in walls):
                         continue  # don't cut a blocked corner
                     step = math.hypot(dx, dy) + cost(n)
@@ -246,7 +262,10 @@ def simplify(points: list[tuple[float, float]], start: tuple[float, float], terr
 
 def _clear_line(a: tuple[float, float], b: tuple[float, float], terrain: TerrainMap) -> bool:
     steps = max(1, int(math.hypot(b[0] - a[0], b[1] - a[1]) / (CELL / 2)))
-    return terrain.path_is_clear([(a[0] + (b[0] - a[0]) * k / steps, a[1] + (b[1] - a[1]) * k / steps)
-                                  for k in range(steps + 1)]) and all(
+    points = [(a[0] + (b[0] - a[0]) * k / steps, a[1] + (b[1] - a[1]) * k / steps) for k in range(steps + 1)]
+    cells = [terrain.cell(*p) for p in points]
+    if terrain.levels and not all(terrain.can_climb(c, n) for c, n in zip(cells, cells[1:]) if c != n):
+        return False
+    return terrain.path_is_clear(points) and all(
         terrain.danger_near(a[0] + (b[0] - a[0]) * k / steps, a[1] + (b[1] - a[1]) * k / steps)
         <= terrain.danger_near(*a) for k in range(0, steps + 1, 4))

@@ -215,7 +215,7 @@ class Mover:
                 distance = math.hypot(x - player.x, y - player.y)
                 if distance <= radius:
                     return True
-                self.terrain.mark_free(player.x, player.y)
+                self.terrain.mark_free(player.x, player.y, player.z)
                 if last_z - player.z > FALL_DROP:
                     self.log("  chute : je retiens ce bord")
                     self.terrain.mark_blocked(check_pos[0], check_pos[1], strength=BLOCK_NOW, solid=True)
@@ -264,14 +264,15 @@ class Mover:
         """walk_to with the walk learnt in the simulation: the map and A* choose the way, the
         learnt policy chooses every 0.2 s how to get to the next waypoint (go round, jump, stop
         before an edge), seeing what the eyes see."""
-        from terrain_sim import DT, FORWARD_ACTIONS, STEER, TURN
+        from navigation import GUARD_RUN, GUARD_WALK
+        from terrain_sim import DT, FORWARD_ACTIONS, RUN_ACTIONS, TURNS
         from walk_policy import observe
 
         player = self.raw.player()
         start = best_at = self.raw.now()
         best = math.hypot(goal[0] - player.x, goal[1] - player.y)
         path = self._plan(player, goal)
-        forward, stuck, previous, stuck_times = False, False, 0, 0
+        forward, running, stuck, previous, stuck_times = False, False, False, 0, 0
         last_z, last_spot = player.z, (player.x, player.y)
         moves: list[tuple[float, float, float]] = []  # (time, x, y) while walking forward
         self.set_pitch(WALK_PITCH)
@@ -282,7 +283,7 @@ class Mover:
                 distance = math.hypot(goal[0] - player.x, goal[1] - player.y)
                 if distance <= radius:
                     return True
-                self.terrain.mark_free(player.x, player.y)
+                self.terrain.mark_free(player.x, player.y, player.z)
                 if last_z - player.z > FALL_DROP:
                     self.log("  chute : je retiens ce bord")
                     self.terrain.mark_blocked(*last_spot, strength=BLOCK_NOW, solid=True)
@@ -320,11 +321,16 @@ class Mover:
                 obs = observe(self._fresh_view(), pitch, self.terrain, player.x, player.y, self.facing(player),
                               path[0], player.hp, stuck, previous)
                 action = self.walker.act(obs)
-                turn = {1: -STEER, 2: STEER, 3: -TURN, 4: TURN}.get(action, 0.0)
+                turn = TURNS.get(action, 0.0)
                 facing = self.facing(player)
+                reach = GUARD_RUN if action in RUN_ACTIONS else GUARD_WALK
                 wants_forward = action in FORWARD_ACTIONS and not (  # the guard: never onto a known edge
-                    self.terrain.edge_ahead(player.x, player.y, facing)
-                    or self.terrain.edge_ahead(player.x, player.y, facing + turn))
+                    self.terrain.edge_ahead(player.x, player.y, facing, reach)
+                    or self.terrain.edge_ahead(player.x, player.y, facing + turn, reach))
+                wants_run = wants_forward and action in RUN_ACTIONS
+                if wants_run != running:
+                    (self.raw.hold if wants_run else self.raw.release)(KEYS["sprint"])
+                    running = wants_run
                 if wants_forward != forward:
                     (self.raw.hold if wants_forward else self.raw.release)(KEYS["forward"])
                     forward = wants_forward
@@ -343,6 +349,8 @@ class Mover:
         finally:
             if forward:
                 self.raw.release(KEYS["forward"])
+            if running:
+                self.raw.release(KEYS["sprint"])
 
     def _plan(self, player: PlayerView, goal: tuple[float, float]) -> list[tuple[float, float]]:
         path = self.terrain.plan((player.x, player.y), goal)

@@ -9,7 +9,10 @@ STRIKE_SIZE = 0.22  # a creature this big on screen is within reach of the Xeno-
 POINT_BLANK = 0.35  # this big: about to hit, strike whatever it is
 APPROACHING = 1.2  # grown this much in about a second: it is coming at us
 FIGHT_CONFIDENCE = 0.08  # during a fight, even a doubtful shape is worth facing
-FLEE_HP = 25  # below this health while still being hit: run
+FLEE_HP = 35  # below this health while still being hit: run
+BACK_OFF_S = 0.35  # step back this long after striking: a charging creature misses
+RUSH_AFTER_S = 1.5  # hurt by a creature that stays out of reach this long: run at it
+RUSH_HP = 50  # ...if health is at least this
 FIGHT_S = 45  # longest fight before running away
 CALM_S = 4  # no damage for this long: whatever is around is not a danger
 HURT_MEMORY_S = 5  # still fighting back this long after the last hit
@@ -37,6 +40,7 @@ def defend(game, mover: Mover, eyes, home: tuple[float, float] | None, hurt: boo
         last_hp = game.player().hp
         sizes: list[tuple[float, float]] = []  # (time, size) of the creature watched
         looks = 0
+        out_of_reach_since = None  # a creature hurting us from afar: since when
         mover.set_pitch(5)
         while game.now() - start < FIGHT_S:
             now = game.now()
@@ -70,7 +74,17 @@ def defend(game, mover: Mover, eyes, home: tuple[float, float] | None, hurt: boo
                 for _ in range(3):
                     game.click()
                     game.wait(0.25)
+                back_off(game, mover)
+                out_of_reach_since = None
+            elif now - hurt_at < HURT_MEMORY_S and not approaching:  # it hurts us from afar
+                out_of_reach_since = out_of_reach_since or now
+                if now - out_of_reach_since > RUSH_AFTER_S and player.hp >= RUSH_HP:
+                    rush(game, mover, eyes, log)
+                    out_of_reach_since = None
+                else:
+                    game.wait(0.15)
             else:
+                out_of_reach_since = None
                 game.wait(0.15)  # watch it
         flee(game, mover, home, log)
         return "fled"
@@ -78,6 +92,37 @@ def defend(game, mover: Mover, eyes, home: tuple[float, float] | None, hurt: boo
         game.alarms = True
         if eyes:
             eyes.confidence = confidence
+
+
+def back_off(game, mover: Mover) -> None:
+    """Step back a little, unless the ground falls away behind."""
+    player = game.player()
+    if mover.terrain.edge_ahead(player.x, player.y, mover.facing(player) + 180):
+        return
+    game.hold(KEYS["back"])
+    game.wait(BACK_OFF_S)
+    game.release(KEYS["back"])
+
+
+def rush(game, mover: Mover, eyes, log=print) -> None:
+    """Run at a creature that keeps out of reach (one that spits from afar), to strike it."""
+    player = game.player()
+    if mover.terrain.edge_ahead(player.x, player.y, mover.facing(player), 4.0):
+        return  # not over a cliff
+    log("  elle m'attaque de loin : je fonce sur elle")
+    game.hold(KEYS["sprint"])
+    game.hold(KEYS["forward"])
+    try:
+        for _ in range(5):
+            game.wait(0.2)
+            view = getattr(eyes, "latest", None)
+            threat = view.nearest_threat() if view else None
+            if threat is None or threat.size >= STRIKE_SIZE:
+                break
+            mover.turn(threat.bearing, speed=500)
+    finally:
+        game.release(KEYS["forward"])
+        game.release(KEYS["sprint"])
 
 
 def recover(game, mover: Mover, home: tuple[float, float] | None, log=print) -> None:
@@ -97,18 +142,27 @@ def recover(game, mover: Mover, home: tuple[float, float] | None, log=print) -> 
 
 
 def flee(game, mover: Mover, home: tuple[float, float] | None, log=print) -> None:
-    """Sprint towards home (the HUB) if known, else straight back, jumping now and then."""
+    """Run towards home (the HUB) if known, along a safe way; else straight back, jumping now
+    and then, stopping before a known edge."""
     log("  je fuis")
     if home is not None:
-        mover.face(*home)
-    else:
-        mover.turn(180, speed=500)
+        if mover.walker is None:
+            game.hold(KEYS["sprint"])
+        try:
+            mover.walk_to(*home, radius=5.0, timeout=FLEE_S)  # the learnt walk runs by itself
+        finally:
+            game.release(KEYS["sprint"])
+        return
+    mover.turn(180, speed=500)
     mover.set_pitch(5)
     game.hold(KEYS["sprint"])
     game.hold(KEYS["forward"])
     try:
         for step in range(int(FLEE_S / 0.5)):
             game.wait(0.5)
+            player = game.player()
+            if mover.terrain.edge_ahead(player.x, player.y, mover.facing(player), 4.0):
+                break
             if step % 4 == 3:
                 game.hold(KEYS["jump"])
                 game.wait(0.1)
