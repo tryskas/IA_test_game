@@ -85,6 +85,19 @@ class FakeEyes:
         return self.View(self.game.now(), (), (0.9,) * 5 + (0.1,) * 5 + (0.9,) * 5, 90.0)
 
 
+class CreatureEyes:
+    """Always sees one creature, 30° to the right, of a given size on screen."""
+
+    def __init__(self, game, size):
+        from perception import Threat, View
+
+        self.game, self.size, self.View, self.Threat = game, size, View, Threat
+
+    def fresh(self, since, timeout=2.0):
+        threat = self.Threat(30.0, 0.0, self.size, 0.5, "animal", (0, 0, 1, 1))
+        return self.View(self.game.now(), (threat,), (), 90.0)
+
+
 class CalibrationTest(unittest.TestCase):
     def test_finds_how_yaw_and_mouse_relate_to_the_map(self):
         for sign, offset, per_count in ((-1, 90.0, 0.07), (1, -45.0, -0.05), (1, 0.0, 0.12)):
@@ -138,6 +151,27 @@ class MoverTest(unittest.TestCase):
         mover = Mover(game, calibrate(game), log=lambda *_: None, eyes=FakeEyes(game))
         self.assertGreater(abs(mover.steer(0)), 10)  # wall ahead: go round it
         self.assertEqual(mover.steer(40), 40)  # that way is open
+
+    def fight(self, size, hurt):
+        from defense import defend
+
+        game = FakeGame()
+        game.alarms, game.ignore_sightings_until, game.clicks = True, 0.0, 0
+        game.click = lambda button="left": setattr(game, "clicks", game.clicks + 1)
+        mover = Mover(game, calibrate(game), log=lambda *_: None)
+        outcome = defend(game, mover, CreatureEyes(game, size), home=(0, 0), hurt=hurt, log=lambda *_: None)
+        self.assertTrue(game.alarms)  # alarms back on after the fight
+        return outcome, game
+
+    def test_leaves_a_calm_creature_alone(self):
+        outcome, game = self.fight(size=0.25, hurt=False)
+        self.assertEqual(outcome, "harmless")
+        self.assertEqual(game.clicks, 0)
+        self.assertGreater(game.ignore_sightings_until, game.now())
+
+    def test_strikes_back_when_hurt(self):
+        outcome, game = self.fight(size=0.25, hurt=True)
+        self.assertGreater(game.clicks, 0)
 
     def test_releases_keys_when_stopped(self):
         game = FakeGame()

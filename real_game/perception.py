@@ -17,16 +17,17 @@ from dataclasses import dataclass
 
 import numpy as np
 
-CREATURE_WORDS = ("creature", "animal", "spider", "monster", "alien")
+CREATURE_WORDS = ("creature", "animal", "wild boar", "lizard", "dinosaur", "spider", "monster")
 DETECTOR_WEIGHTS = "yolov8s-worldv2.pt"
 DEPTH_MODEL = "depth-anything/Depth-Anything-V2-Small-hf"
-DETECT_CONFIDENCE = 0.25
+DETECT_CONFIDENCE = 0.18
+DETECT_SIZE = 800  # pixels the detector works at: bigger finds far creatures better, but is slower
 ANALYSIS_WIDTH = 960  # images are shrunk to this width before analysis
 COLUMNS = 15  # the view is cut into this many columns, left to right
-HORIZON_BAND = (0.35, 0.62)  # rows (fractions of the height) where obstacles at body height show
-GROUND_BAND = (0.85, 0.98)  # rows showing the ground just in front of the player
+HORIZON_BAND = (0.30, 0.62)  # rows (fractions of the height) where something in the way shows
+GROUND_BAND = (0.65, 0.97)  # rows that show the ground in front in nearly every view
 SKY_BAND = (0.0, 0.15)
-BLOCKED = 0.55  # a column is blocked when it is at least this near, compared with the ground in front
+BLOCKED = 0.35  # sticking out of the ground by this share of the ground's depth range: in the way
 # Parts of the screen where the player's own hand, tool and HUD are: never creatures.
 NOT_THE_WORLD = ((0.55, 0.55, 1.0, 1.0), (0.0, 0.85, 1.0, 1.0))
 
@@ -44,25 +45,34 @@ def vertical_of(y: float, height: float, width: float, fov: float) -> float:
 
 
 def clearance_from_depth(depth: np.ndarray, columns: int = COLUMNS) -> tuple[float, ...]:
-    """How open each column is: 1 = far away, 0.5 = at the limit, 0 = right in front.
+    """How open each column is: 1 = clear, 0.5 = at the limit, 0 = something right in front.
 
-    Depth models give a relative scale (sometimes « bigger is nearer », sometimes the
-    opposite): the ground just in front of the player sets both the direction and the
-    unit, so no calibration is needed.
+    The bottom of the view is nearly always ground: how its nearness grows from row
+    to row gives a model of the ground, whatever the camera's tilt. What sticks out
+    of that ground (a rock, a trunk, a wall) is in the way. Depth models give a
+    relative scale, sometimes « bigger is nearer », sometimes the opposite: both work.
     """
     height, width = depth.shape
-    def rows(band):
-        return depth[int(height * band[0]):max(int(height * band[1]), int(height * band[0]) + 1)]
+    fractions = (np.arange(height) + 0.5) / height
 
-    if np.median(rows(GROUND_BAND)) < np.median(rows(SKY_BAND)):
+    def rows(band):
+        return (fractions >= band[0]) & (fractions <= band[1])
+
+    if np.median(depth[rows(GROUND_BAND)]) < np.median(depth[rows(SKY_BAND)]):
         depth = 1.0 / np.clip(depth, 1e-6, None)  # a distance: its inverse is the nearness
-    reference = float(np.median(rows(GROUND_BAND))) or 1e-6
+    ground = rows(GROUND_BAND)
+    slope, offset = np.polyfit(fractions[ground], np.median(depth[ground], axis=1), 1)
+    slope = max(slope, 1e-6)  # the ground gets nearer towards the bottom
+    far = float(np.percentile(depth, 5))
+    expected = np.maximum(slope * fractions + offset, far)  # the ground's nearness, row by row
+    unit = slope * (GROUND_BAND[1] - HORIZON_BAND[0])  # the ground's nearness range in view
     band = rows(HORIZON_BAND)
+    sticking_out = (depth[band] - expected[band][:, None]) / unit
     open_share = []
     for i in range(columns):
-        part = band[:, int(i * width / columns):int((i + 1) * width / columns)]
-        nearness = float(np.percentile(part, 90)) / reference
-        open_share.append(min(1.0, max(0.0, 1 - 0.5 * nearness / BLOCKED)))
+        part = sticking_out[:, int(i * width / columns):int((i + 1) * width / columns)]
+        score = float(np.percentile(part, 80))
+        open_share.append(min(1.0, max(0.0, 1 - 0.5 * score / BLOCKED)))
     return tuple(open_share)
 
 
@@ -123,6 +133,7 @@ class Eyes:
         self.log = log
         self.latest: View | None = None
         self.latest_image: np.ndarray | None = None
+        self.last_depth: np.ndarray | None = None
         self._want = (creatures, depth)
         self._detector = self._depth = None
         self._running = False
@@ -156,7 +167,7 @@ class Eyes:
         height, width = small.shape[:2]
         threats: tuple[Threat, ...] = ()
         if self._detector is not None:
-            result = self._detector.predict(small, imgsz=640, conf=DETECT_CONFIDENCE, verbose=False)[0]
+            result = self._detector.predict(small, imgsz=DETECT_SIZE, conf=DETECT_CONFIDENCE, verbose=False)[0]
             boxes = [
                 (*xyxy, score, CREATURE_WORDS[int(cls)])
                 for xyxy, score, cls in zip(result.boxes.xyxy.tolist(), result.boxes.conf.tolist(),
@@ -168,7 +179,8 @@ class Eyes:
             from PIL import Image
 
             depth = self._depth(Image.fromarray(small[:, :, ::-1]))["predicted_depth"]
-            clearance = clearance_from_depth(np.asarray(depth.squeeze().cpu().numpy(), dtype=np.float32))
+            self.last_depth = np.asarray(depth.squeeze().cpu().numpy(), dtype=np.float32)
+            clearance = clearance_from_depth(self.last_depth)
         return View(taken_at, threats, clearance, self.fov)
 
     def _watch(self) -> None:
@@ -208,7 +220,7 @@ def annotate(image: np.ndarray, view: View) -> np.ndarray:
         x0, x1 = int(i * width / len(view.clearance)), int((i + 1) * width / len(view.clearance))
         colour = (0, 200, 0) if share >= 0.5 else (0, 0, 230)
         cv2.rectangle(out, (x0 + 2, int(height * HORIZON_BAND[0])), (x1 - 2, int(height * HORIZON_BAND[1])), colour, 2)
-        cv2.putText(out, f"{share:.1f}", (x0 + 6, int(height * HORIZON_BAND[0]) - 6),
+        cv2.putText(out, f"{share:.2f}", (x0 + 6, int(height * HORIZON_BAND[0]) - 6),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.45, colour, 1)
     for t in view.threats:
         x0, y0, x1, y1 = (int(v) for v in t.box)

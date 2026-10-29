@@ -11,13 +11,16 @@ from perception import (  # noqa: E402
 )
 
 
-def scene(wall_columns=slice(0, 0), near_is_big=True, width=150, height=100, horizon=0.45) -> np.ndarray:
+def scene(wall_columns=slice(0, 0), wall_at=0.85, near_is_big=True, width=150, height=100,
+          horizon=0.40, offset=0.0) -> np.ndarray:
     """A made-up depth picture with real perspective: on flat ground, nearness grows
-    with the distance below the horizon line; the sky is far. Maybe a wall, as near
-    as the ground at the player's feet."""
+    with the distance below the horizon line, and the sky is far. A wall stands as
+    near as the ground seen at row `wall_at`. `offset` shifts every value, as depth
+    models give relative numbers."""
     rows = np.clip(np.linspace(0, 1, height) - horizon, 0, None)[:, None] + 1e-3
     nearness = np.repeat(rows, width, axis=1)
-    nearness[:, wall_columns] = rows.max()
+    nearness[: int(height * wall_at), wall_columns] = wall_at - horizon
+    nearness = nearness + offset
     return nearness if near_is_big else 1.0 / nearness
 
 
@@ -29,18 +32,26 @@ class GeometryTest(unittest.TestCase):
 
 
 class ClearanceTest(unittest.TestCase):
-    def test_open_ground_is_open_everywhere(self):
-        self.assertTrue(all(c >= 0.5 for c in clearance_from_depth(scene())))
+    def open_columns(self, depth):
+        return [c >= 0.5 for c in clearance_from_depth(depth)]
 
-    def test_a_wall_on_the_left_blocks_the_left_columns_only(self):
-        clearance = clearance_from_depth(scene(slice(0, 50)))  # left third
-        self.assertTrue(all(c < 0.5 for c in clearance[:4]))
-        self.assertTrue(all(c >= 0.5 for c in clearance[6:]))
+    def test_open_ground_is_open_whatever_the_camera_tilt(self):
+        for horizon in (0.25, 0.40, 0.55):
+            self.assertTrue(all(self.open_columns(scene(horizon=horizon))), horizon)
 
-    def test_works_whichever_way_the_model_counts(self):
-        a = clearance_from_depth(scene(slice(0, 50), near_is_big=True))
-        b = clearance_from_depth(scene(slice(0, 50), near_is_big=False))
-        self.assertEqual([c >= 0.5 for c in a], [c >= 0.5 for c in b])
+    def test_a_near_wall_on_the_left_blocks_the_left_columns_only(self):
+        for horizon in (0.30, 0.45):
+            columns = self.open_columns(scene(slice(0, 50), horizon=horizon))
+            self.assertFalse(any(columns[:4]), horizon)
+            self.assertTrue(all(columns[6:]), horizon)
+
+    def test_a_far_wall_is_not_in_the_way(self):
+        self.assertTrue(all(self.open_columns(scene(slice(0, 150), wall_at=0.50, horizon=0.40))))
+
+    def test_works_whichever_way_and_whatever_scale_the_model_uses(self):
+        expected = self.open_columns(scene(slice(0, 50)))
+        self.assertEqual(self.open_columns(scene(slice(0, 50), near_is_big=False)), expected)
+        self.assertEqual(self.open_columns(scene(slice(0, 50), offset=3.0)), expected)
         self.assertGreater(BLOCKED, 0)
 
 

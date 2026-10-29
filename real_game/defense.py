@@ -6,46 +6,63 @@ from game_state import read_player
 from moves import Mover, SkillError
 
 STRIKE_SIZE = 0.22  # a creature this big on screen is within reach of the Xeno-Zapper
+POINT_BLANK = 0.35  # this big: about to hit, strike whatever it is
+APPROACHING = 1.2  # grown this much in about a second: it is coming at us
 FLEE_HP = 35  # below this health, stop fighting and run
 FIGHT_S = 45  # longest fight before running away
-CALM_S = 4  # no creature seen and no damage for this long: safe again
+CALM_S = 4  # no damage for this long: whatever is around is not a danger
+HURT_MEMORY_S = 5  # still fighting back this long after the last hit
+IGNORE_HARMLESS_S = 20  # don't stop again for a harmless creature during this time
 FLEE_S = 8
 RESPAWN_WORDS = ("Réapparaître", "Réapparition", "Respawn", "Revivre")
 
 
-def defend(game, mover: Mover, eyes, home: tuple[float, float] | None, log=print) -> str:
-    """Fight what attacks the player. Returns "safe" or "fled"."""
+def defend(game, mover: Mover, eyes, home: tuple[float, float] | None, hurt: bool, log=print) -> str:
+    """Deal with a creature or an attack. Returns "safe", "harmless" or "fled".
+
+    Not every creature is hostile: strike only when losing health, when the
+    creature rushes at the player, or when it is right in front.
+    """
     game.alarms = False  # the fight itself must not be interrupted by the alarm
     try:
         start = calm_since = game.now()
+        hurt_at = start if hurt else -1e9
         last_hp = game.player().hp
+        sizes: list[tuple[float, float]] = []  # (time, size) of the creature watched
         mover.set_pitch(5)
         while game.now() - start < FIGHT_S:
+            now = game.now()
             player = game.player()
             if player.hp < last_hp - 0.5:
-                calm_since = game.now()
+                hurt_at = calm_since = now
             last_hp = player.hp
             if player.hp < FLEE_HP:
                 flee(game, mover, home, log)
                 return "fled"
-            view = eyes.fresh(game.now() - 0.1, timeout=2.0) if eyes else None
+            view = eyes.fresh(now - 0.1, timeout=2.0) if eyes else None
             threat = view.nearest_threat() if view else None
+            quiet = now - hurt_at > CALM_S
             if threat is None:
-                if game.now() - calm_since > CALM_S:
+                if quiet and now - calm_since > CALM_S:
                     return "safe"
                 mover.turn(90)  # hit by something unseen: look around
                 game.wait(0.3)
                 continue
-            calm_since = game.now()
-            log(f"  créature ({threat.label}) à {threat.bearing:+.0f}°, je lui fais face")
+            sizes = [(t, s) for t, s in sizes if now - t < 1.5] + [(now, threat.size)]
+            approaching = threat.size > APPROACHING * sizes[0][1] and now - sizes[0][0] > 0.5
+            if quiet and not approaching and now - start > CALM_S:
+                game.ignore_sightings_until = now + IGNORE_HARMLESS_S
+                return "harmless"
             mover.turn(threat.bearing)
             game.mouse(0, round(threat.below / mover.cal.pitch_per_count))
-            if threat.size >= STRIKE_SIZE:
+            hostile = now - hurt_at < HURT_MEMORY_S or approaching or threat.size >= POINT_BLANK
+            if hostile and threat.size >= STRIKE_SIZE:
+                log(f"  je frappe ({threat.label})")
                 for _ in range(3):
                     game.click()
                     game.wait(0.25)
             else:
-                game.wait(0.2)  # let it come within reach
+                game.wait(0.2)  # watch it
         flee(game, mover, home, log)
         return "fled"
     finally:

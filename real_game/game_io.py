@@ -27,6 +27,10 @@ class Stopped(Exception):
 class UnderAttack(Exception):
     """The player is losing health, or a creature is close: whatever was being done must stop."""
 
+    def __init__(self, reason: str, hurt: bool):
+        super().__init__(reason)
+        self.hurt = hurt
+
 
 class Died(Exception):
     pass
@@ -43,6 +47,7 @@ class RealGame:
         self.alarms = True  # off while defending, so the defence itself is not interrupted
         self.last_hurt: tuple[float, float] | None = None  # where the player was last hurt
         self.eyes = None  # perception.Eyes, when the AI can see
+        self.ignore_sightings_until = 0.0  # after meeting a harmless creature, don't stop for it again
         self._watch_stop_key()
 
     def _watch_stop_key(self) -> None:
@@ -64,11 +69,12 @@ class RealGame:
         if self.alarms and time.perf_counter() - self._health_at > HEALTH_CHECK_S:
             self.player()  # updates the health and raises if hurt
         view = self.eyes.latest if self.eyes is not None else None
-        if self.alarms and view is not None and time.perf_counter() - view.taken_at < 1.0:
+        if (self.alarms and view is not None and time.perf_counter() - view.taken_at < 1.0
+                and time.perf_counter() > self.ignore_sightings_until):
             threat = view.nearest_threat()
             if threat is not None and threat.size >= CLOSE_THREAT:
                 self.release_all()
-                raise UnderAttack(f"créature en vue ({threat.label})")
+                raise UnderAttack(f"créature en vue ({threat.label})", hurt=False)
 
 
     # What moves.py uses -------------------------------------------------------
@@ -85,7 +91,7 @@ class RealGame:
             self.last_hurt = (player.x, player.y)
             if self.alarms:
                 self.release_all()
-                raise UnderAttack("je perds de la vie")
+                raise UnderAttack("je perds de la vie", hurt=True)
         return player
 
     def nodes(self) -> tuple[Node, ...]:

@@ -159,7 +159,9 @@ def survive(alarm: Exception, game: RealGame, mover: Mover, menus: Menus, memory
     print(f"[{stamp()}] Danger : {alarm}")
     hub = terminal()
     home = (hub["location"]["x"] / 100, hub["location"]["y"] / 100) if hub else None
-    print(f"  {'hors de danger' if defend(game, mover, game.eyes, home) == 'safe' else 'à l’abri'}")
+    outcome = defend(game, mover, game.eyes, home, hurt=getattr(alarm, "hurt", True))
+    print({"safe": "  hors de danger", "harmless": "  créature inoffensive, je reprends",
+           "fled": "  à l'abri"}[outcome])
 
 
 def play(game: RealGame, mover: Mover, menus: Menus, memory: Memory) -> None:
@@ -298,6 +300,11 @@ def watch(eyes, seconds: float = 20, every: float = 2.0) -> None:
         shot += 1
         path = folder / f"vision_{shot:02d}.jpg"
         cv2.imwrite(str(path), annotate(image, view))
+        if eyes.last_depth is not None:  # small copy of the depth, to fine-tune obstacle spotting
+            import numpy as np
+
+            small = cv2.resize(eyes.last_depth, (192, 108), interpolation=cv2.INTER_AREA)
+            np.savez_compressed(path.with_suffix(".npz"), depth=small.astype(np.float16))
         blocked = sum(1 for c in view.clearance if c < 0.5)
         names = ", ".join(f"{t.label} {t.bearing:+.0f}°" for t in view.threats) or "aucune"
         print(f"  {path.name} : créatures : {names} | directions bloquées : {blocked}/{len(view.clearance)}")
