@@ -92,7 +92,8 @@ def play(game: RealGame, mover: Mover, menus: Menus, memory: Memory, model: str)
     while True:
         state = read_state()
         if state.upgrades_done >= len(data.HUB_UPGRADES):
-            print(f"[{stamp()}] Tier 0 terminé !")
+            print(f"[{stamp()}] Les 6 HUB upgrades (Tier 0) sont faits dans cette partie.")
+            print("  La suite (jalons des paliers 1 et 2 au terminal du HUB) n'est pas encore programmée.")
             return
         sim = to_simulation(state)
         if "workshop" in memory.spots:
