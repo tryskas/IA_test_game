@@ -21,6 +21,9 @@ KEYS = {
     "jump": "space",
     "inventory": "tab",
     "interact": "e",
+    "build": "a",  # build menu (Q on a QWERTY keyboard)
+    "craft": "space",  # hold to craft at a workbench
+    "close": "escape",
 }
 
 # Key that stops any script driving the game, at any moment.

@@ -11,3 +11,4 @@ captures/
 
 # Measured by real_game/agent.py calibrer, specific to each PC
 real_game/calibration.json
+real_game/memory.json

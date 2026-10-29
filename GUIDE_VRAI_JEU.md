@@ -219,7 +219,27 @@ python real_game/agent.py aller fer
 python real_game/agent.py miner fer 10
 ```
 
-4. **Jouer** : l'IA enchaîne les actions de son plan de jeu. Pour l'instant, elle sait miner et attendre seule. Pour le reste (fabriquer, livrer le HUB, construire...), elle t'affiche l'action et attend que tu la fasses toi-même, jusqu'à ce que ces compétences soient ajoutées.
+4. **Les menus**, à tester un par un. L'IA lit le texte à l'écran pour trouver les boutons :
+
+```bash
+python real_game/agent.py equiper
+```
+
+```bash
+python real_game/agent.py construire hub
+```
+
+```bash
+python real_game/agent.py construire etabli
+```
+
+```bash
+python real_game/agent.py fabriquer "Lingot de fer" 5
+```
+
+L'IA retient où elle a construit l'établi et l'atelier (fichier `real_game/memory.json`, propre à chaque partie), pour y revenir ensuite.
+
+5. **Jouer** : l'IA fait le début de partie (équiper, HUB, établi), puis enchaîne les actions de son plan de jeu : miner, fabriquer à l'établi, construire l'atelier. Pour ce qu'elle ne sait pas encore faire (livrer le HUB, foreuses portables, machines...), elle t'affiche l'action et attend que tu la fasses, jusqu'à ce que ces compétences soient ajoutées.
 
 ```bash
 python real_game/agent.py jouer

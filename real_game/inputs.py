@@ -137,3 +137,22 @@ def click(button: str = "left", hold_s: float = 0.05) -> None:
     mouse_down(button)
     time.sleep(hold_s)
     mouse_up(button)
+
+
+KEYEVENTF_UNICODE = 0x0004
+
+
+def type_text(text: str, delay_s: float = 0.03) -> None:
+    """Type text as characters (accents included), whatever the keyboard layout."""
+    for char in text:
+        down = INPUT(type=INPUT_KEYBOARD, ki=KEYBDINPUT(wVk=0, wScan=ord(char), dwFlags=KEYEVENTF_UNICODE))
+        up = INPUT(type=INPUT_KEYBOARD,
+                   ki=KEYBDINPUT(wVk=0, wScan=ord(char), dwFlags=KEYEVENTF_UNICODE | KEYEVENTF_KEYUP))
+        _send(down, up)
+        time.sleep(delay_s)
+
+
+def double_click(button: str = "left") -> None:
+    click(button)
+    time.sleep(0.08)
+    click(button)
