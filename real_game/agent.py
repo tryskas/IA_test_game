@@ -11,6 +11,9 @@ Single skills, to test them one by one:
     python real_game/agent.py fabriquer "Barre de fer" 5
     python real_game/agent.py jalon                     # choose the next milestone at the HUB terminal
     python real_game/agent.py deposer                   # give the HUB terminal what it needs
+    python real_game/agent.py voir                      # 20 s of what the AI sees, saved as images
+
+The AI watches the screen (creatures, obstacles) unless --sans-vision is given.
 
 Each command waits 5 seconds so you can click in the game. F12 stops at once;
 so does leaving the game window.
@@ -22,8 +25,10 @@ import time
 import urllib.error
 
 from common import find_game_window
-from game_io import RealGame, Stopped
-from game_state import fetch, read_player
+from config import FOV
+from defense import defend, respawn
+from game_io import Died, RealGame, Stopped, UnderAttack
+from game_state import ROOT, fetch, read_player
 from menus import Memory, Menus
 from moves import Calibration, Mover, SkillError, calibrate
 from planner import RAW, Plan, Step, next_step, parse_schematics
@@ -134,6 +139,29 @@ def do(step: Step, game: RealGame, mover: Mover, menus: Menus) -> None:
         game.wait(WAIT_S)
 
 
+def remember_danger(game: RealGame, memory: Memory) -> None:
+    """Note where the player got hurt, to mine elsewhere next time."""
+    spot = game.last_hurt
+    if spot is None:
+        player = read_player()
+        spot = (player.x, player.y)
+    memory.data.setdefault("dangers", []).append([round(spot[0], 1), round(spot[1], 1)])
+    memory.save()
+
+
+def survive(alarm: Exception, game: RealGame, mover: Mover, menus: Menus, memory: Memory) -> None:
+    """React to an attack or a death, then let the plan carry on."""
+    remember_danger(game, memory)
+    if isinstance(alarm, Died):
+        print(f"[{stamp()}] Mort : je réapparais (l'inventaire est resté sur place)")
+        respawn(game, menus.screen)
+        return
+    print(f"[{stamp()}] Danger : {alarm}")
+    hub = terminal()
+    home = (hub["location"]["x"] / 100, hub["location"]["y"] / 100) if hub else None
+    print(f"  {'hors de danger' if defend(game, mover, game.eyes, home) == 'safe' else 'à l’abri'}")
+
+
 def play(game: RealGame, mover: Mover, menus: Menus, memory: Memory) -> None:
     start_of_game(menus, memory)
     failures = 0
@@ -150,6 +178,11 @@ def play(game: RealGame, mover: Mover, menus: Menus, memory: Memory) -> None:
         try:
             do(step, game, mover, menus)
             failures = 0
+        except (UnderAttack, Died) as alarm:
+            try:
+                survive(alarm, game, mover, menus, memory)
+            except Died as again:
+                survive(again, game, mover, menus, memory)
         except SkillError as problem:
             failures += 1
             print(f"  échec : {problem}")
@@ -159,7 +192,8 @@ def play(game: RealGame, mover: Mover, menus: Menus, memory: Memory) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("commande", choices=["calibrer", "jouer", "equiper", "construire", "aller", "miner",
+    parser.add_argument("--sans-vision", action="store_true", help="ne pas analyser l'image (créatures, obstacles)")
+    parser.add_argument("commande", choices=["calibrer", "jouer", "equiper", "construire", "aller", "miner", "voir",
                                              "fabriquer", "jalon", "deposer"])
     parser.add_argument("quoi", nargs="?", help="ressource, bâtiment ou recette")
     parser.add_argument("quantite", nargs="?", type=int, default=10)
@@ -182,6 +216,16 @@ def main() -> None:
     if window is None:
         raise SystemExit("Je ne trouve pas la fenêtre du jeu.")
     game = RealGame()
+    eyes = None
+    if not args.sans_vision and args.commande in ("jouer", "aller", "miner", "voir"):
+        from perception import Eyes
+
+        print("Chargement de la vision (la première fois, téléchargement des modèles)...")
+        eyes = Eyes((window.left, window.top, window.width, window.height), FOV).start()
+        game.eyes = eyes
+    if args.commande == "voir":
+        watch(eyes)
+        return
     countdown()
     try:
         if args.commande == "calibrer":
@@ -189,8 +233,8 @@ def main() -> None:
             cal.save()
             print(f"Calibrage enregistré : {cal}")
             return
-        mover = Mover(game, Calibration.load())
         memory = Memory.load()
+        mover = Mover(game, Calibration.load(), dangers=memory.data.setdefault("dangers", []), eyes=eyes)
         menus = Menus(game, mover, Screen(window.left, window.top, window.width, window.height), memory)
         if args.commande == "jouer":
             play(game, mover, menus, memory)
@@ -231,6 +275,35 @@ def main() -> None:
         print("Arrêt : le mod ne répond plus (jeu fermé ou serveur arrêté).")
     finally:
         game.release_all()
+        if eyes is not None:
+            eyes.stop()
+
+
+def watch(eyes, seconds: float = 20, every: float = 2.0) -> None:
+    """Save what the AI sees: creatures framed, open (green) or blocked (red) directions."""
+    import cv2
+
+    from perception import annotate
+
+    folder = ROOT / "captures" / "vision"
+    folder.mkdir(parents=True, exist_ok=True)
+    print(f"Je regarde pendant {seconds:.0f} s : bouge dans le jeu, approche des créatures et des obstacles.")
+    end = time.perf_counter() + seconds
+    shot = 0
+    while time.perf_counter() < end:
+        view = eyes.fresh(time.perf_counter(), timeout=5)
+        image = eyes.latest_image
+        if view is None or image is None:
+            continue
+        shot += 1
+        path = folder / f"vision_{shot:02d}.jpg"
+        cv2.imwrite(str(path), annotate(image, view))
+        blocked = sum(1 for c in view.clearance if c < 0.5)
+        names = ", ".join(f"{t.label} {t.bearing:+.0f}°" for t in view.threats) or "aucune"
+        print(f"  {path.name} : créatures : {names} | directions bloquées : {blocked}/{len(view.clearance)}")
+        time.sleep(every)
+    eyes.stop()
+    print(f"Images enregistrées dans {folder}")
 
 
 if __name__ == "__main__":

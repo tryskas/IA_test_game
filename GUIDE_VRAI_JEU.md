@@ -255,7 +255,25 @@ python real_game/agent.py deposer
 python real_game/agent.py jouer
 ```
 
-## Étape 6 : montrer une partie à l'IA
+## Étape 6 : la vision
+
+L'IA analyse l'image du jeu en continu, quelques fois par seconde :
+
+- **créatures** : un détecteur d'objets à vocabulaire ouvert (YOLO-World) les trouve à l'écran à partir de mots (« créature », « animal », « araignée »...), sans entraînement sur Satisfactory. L'IA sait ainsi de combien se tourner pour faire face à une créature et la frapper avec le repousse-xénos. Si sa vie descend trop bas, elle fuit vers le HUB ;
+- **obstacles** : un modèle de profondeur (Depth Anything V2) estime la distance de chaque point de l'image. Chaque direction devant elle est classée dégagée ou bloquée, et elle contourne ce qui est dans le chemin ;
+- **secours** : si sa vie baisse sans qu'elle ait rien vu, elle s'arrête, se retourne pour chercher l'attaquant, ou fuit. Après une mort, elle clique sur le bouton de réapparition et reprend son plan. Elle retient les endroits où elle a été attaquée et évite ensuite les gisements à moins de 50 m.
+
+Vérifie d'abord le **champ de vision** du jeu (Options > Vidéo) et reporte-le dans `real_game/config.py` (`FOV`, 90 par défaut). Il sert à transformer la position d'une créature à l'écran en angle.
+
+Pour voir ce que l'IA voit, sans qu'elle touche aux commandes, lance :
+
+```bash
+python real_game/agent.py voir
+```
+
+Pendant 20 secondes, elle enregistre dans `captures/vision/` des images annotées : créatures encadrées en orange avec leur angle, directions dégagées en vert et bloquées en rouge. Le premier lancement télécharge les modèles (environ 500 Mo). Ajoute `--sans-vision` à une commande pour jouer sans analyse d'image.
+
+## Étape 7 : montrer une partie à l'IA
 
 Pour que l'IA joue seule du début à la fin, elle doit connaître chaque menu du jeu (inventaire, capsule, construction du HUB, établi, terminal). Joue une fois le début d'une **nouvelle partie** pendant que ce script enregistre :
 

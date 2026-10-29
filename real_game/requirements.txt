@@ -6,3 +6,7 @@ bettercam; sys_platform == "win32"
 pygetwindow; sys_platform == "win32"
 pynput
 easyocr
+# Vision: creatures (open-vocabulary detector) and obstacles (depth)
+ultralytics
+transformers
+pillow

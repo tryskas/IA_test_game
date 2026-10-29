@@ -21,6 +21,7 @@ AREAS = {
     "workbench_recipe": ((0.40, 0.26, 0.54, 0.34), 1.0),  # name of the selected recipe
     "terminal_top": ((0.15, 0.04, 0.75, 0.36), 0.5),  # tabs, milestones, items to deposit
     "terminal_bottom": ((0.30, 0.74, 0.70, 0.90), 0.5),  # « Choisir une étape » button
+    "center": ((0.25, 0.30, 0.75, 0.90), 0.5),  # messages in the middle, like the respawn button
 }
 HOLOGRAM_AREA = (0.20, 0.25, 0.80, 0.95)
 SHORT_WORD = 4  # words this short tolerate one misread letter

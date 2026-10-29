@@ -71,6 +71,20 @@ class FakeGame:
                 self.y += 5.5 * math.sin(math.radians(self.facing)) * dt
 
 
+class FakeEyes:
+    """Sees a wall straight ahead, open on both sides."""
+
+    def __init__(self, game):
+        from perception import View
+
+        self.game = game
+        self.View = View
+
+    @property
+    def latest(self):
+        return self.View(self.game.now(), (), (0.9,) * 5 + (0.1,) * 5 + (0.9,) * 5, 90.0)
+
+
 class CalibrationTest(unittest.TestCase):
     def test_finds_how_yaw_and_mouse_relate_to_the_map(self):
         for sign, offset, per_count in ((-1, 90.0, 0.07), (1, -45.0, -0.05), (1, 0.0, 0.12)):
@@ -118,6 +132,12 @@ class MoverTest(unittest.TestCase):
         game = FakeGame()
         with self.assertRaises(SkillError):
             self.mover(game).mine_by_hand("copper_ore", 5)
+
+    def test_steers_round_what_the_eyes_see_in_the_way(self):
+        game = FakeGame()
+        mover = Mover(game, calibrate(game), log=lambda *_: None, eyes=FakeEyes(game))
+        self.assertGreater(abs(mover.steer(0)), 10)  # wall ahead: go round it
+        self.assertEqual(mover.steer(40), 40)  # that way is open
 
     def test_releases_keys_when_stopped(self):
         game = FakeGame()

@@ -67,6 +67,8 @@ class PlayerView:
     inventory: dict[str, float]  # mini-game items carried
     other_items: dict[str, float]  # items the mini-game ignores, by in-game name
     by_class: dict[str, float] = field(default_factory=dict)  # every item carried, by game class name
+    hp: float = 100.0
+    dead: bool = False
 
 
 @dataclass(frozen=True)
@@ -155,7 +157,8 @@ def parse_player(entry: dict) -> PlayerView:
             inventory[key] = inventory.get(key, 0) + stack.get("Amount", 0)
     x, y, z = _location(entry) or (0.0, 0.0, 0.0)
     yaw = float((entry.get("location") or {}).get("rotation", 0.0))
-    return PlayerView(x, y, z, yaw, inventory, other, by_class)
+    return PlayerView(x, y, z, yaw, inventory, other, by_class,
+                      float(entry.get("PlayerHP", 100.0)), bool(entry.get("Dead", False)))
 
 
 def read_player(get: Callable[[str], object] = fetch) -> PlayerView:

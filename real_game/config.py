@@ -24,7 +24,12 @@ KEYS = {
     "build": "a",  # build menu (Q on a QWERTY keyboard)
     "craft": "space",  # hold to craft at a workbench
     "close": "escape",
+    "sprint": "shift",
 }
+
+# Field of view set in the game (Options > Vidéo, « Champ de vision »), in degrees:
+# needed to turn an object's place on screen into an angle.
+FOV = 90
 
 # Key that stops any script driving the game, at any moment.
 STOP_KEY = "f12"

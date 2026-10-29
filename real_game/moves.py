@@ -20,8 +20,11 @@ from config import KEYS
 from game_state import Node, PlayerView
 
 CALIBRATION_FILE = Path(__file__).resolve().parent / "calibration.json"
+WALK_PITCH = 5  # degrees below the horizon while walking: the eyes need to see what is ahead
+FRESH_VIEW_S = 1.5  # a view older than this is not used to steer
 STEP_S = 0.15  # how often the walk is corrected
 MINE_RADIUS = 2.5  # metres from the node's centre where we stop to mine
+DANGER_RADIUS = 50.0  # metres around a place where the player was attacked
 EYE_HEIGHT = 1.7  # metres
 AIM_PITCHES = (15, 25, 35, 45, 55, 65)  # degrees below the horizon tried to find the node
 TAP_S, LONG_PRESS_S = 0.1, 1.5
@@ -114,10 +117,12 @@ def calibrate(raw, counts: int = 400) -> Calibration:
 class Mover:
     """The player's body: turns, walks and mines, checking the result through the mod."""
 
-    def __init__(self, raw, calibration: Calibration, log=print):
+    def __init__(self, raw, calibration: Calibration, log=print, dangers: list | None = None, eyes=None):
         self.raw = raw
         self.cal = calibration
         self.log = log
+        self.eyes = eyes  # perception.Eyes: to see obstacles while walking
+        self.dangers = dangers if dangers is not None else []  # [x, y] where the player was attacked
 
     def facing(self, player: PlayerView | None = None) -> float:
         return self.cal.facing((player or self.raw.player()).yaw)
@@ -152,13 +157,15 @@ class Mover:
         start = self.raw.now()
         forward = False
         check_at, check_pos, unstick = start + 1.5, (player.x, player.y), 0
+        if self.eyes is not None:
+            self.set_pitch(WALK_PITCH)
         try:
             while self.raw.now() - start < timeout:
                 player = self.raw.player()
                 distance = math.hypot(x - player.x, y - player.y)
                 if distance <= radius:
                     return True
-                delta = wrap(heading(player.x, player.y, x, y) - self.facing(player))
+                delta = self.steer(wrap(heading(player.x, player.y, x, y) - self.facing(player)))
                 if abs(delta) > 35:  # far off course: stop and turn on the spot
                     if forward:
                         self.raw.release(KEYS["forward"])
@@ -183,6 +190,20 @@ class Mover:
         finally:
             if forward:
                 self.raw.release(KEYS["forward"])
+
+    def steer(self, delta: float) -> float:
+        """Direction to walk, given the target's: around what the eyes see in the way."""
+        view = self.eyes.latest if self.eyes is not None else None
+        if view is None or not view.clearance or self.raw.now() - view.taken_at > FRESH_VIEW_S:
+            return delta
+        if abs(delta) > view.fov / 2 - 5 or view.is_open(delta):
+            return delta  # target out of sight (turn first), or the way is clear
+        best = view.best_direction(delta)
+        if best is not None:
+            return best
+        half = len(view.clearance) // 2
+        left, right = sum(view.clearance[:half]), sum(view.clearance[-half:])
+        return delta + (60 if right >= left else -60)  # everything blocked: turn to the more open side
 
     def _unstick(self, attempt: int) -> None:
         """Jump; after a few tries, also step sideways."""
@@ -210,6 +231,11 @@ class Mover:
         free = [n for n in self.raw.nodes() if n.resource == resource and not n.exploited]
         if not free:
             raise SkillError("aucun gisement libre de ce type n'est connu")
+        safe = [n for n in free if all(math.hypot(n.x - x, n.y - y) > DANGER_RADIUS for x, y in self.dangers)]
+        if safe:
+            free = safe
+        else:
+            self.log("  tous les gisements connus sont près d'un danger : je prends le plus proche")
         node = min(free, key=lambda n: math.hypot(n.x - player.x, n.y - player.y))
         far = math.hypot(node.x - player.x, node.y - player.y)
         self.log(f"  gisement {node.purity} à {far:.0f} m")
