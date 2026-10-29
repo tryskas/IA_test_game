@@ -48,6 +48,16 @@ class ClearanceTest(unittest.TestCase):
     def test_a_far_wall_is_not_in_the_way(self):
         self.assertTrue(all(self.open_columns(scene(slice(0, 150), wall_at=0.50, horizon=0.40))))
 
+    def test_the_players_hand_is_not_an_obstacle(self):
+        depth = scene()
+        depth[55:100, 85:150] = depth.max() * 3  # the hand and the tool, bottom right, very near
+        self.assertTrue(all(self.open_columns(depth)))
+
+    def test_a_rock_on_the_right_still_blocks_the_right(self):
+        columns = self.open_columns(scene(slice(110, 150)))
+        self.assertFalse(any(columns[-3:]))
+        self.assertTrue(all(columns[:9]))
+
     def test_works_whichever_way_and_whatever_scale_the_model_uses(self):
         expected = self.open_columns(scene(slice(0, 50)))
         self.assertEqual(self.open_columns(scene(slice(0, 50), near_is_big=False)), expected)

@@ -25,8 +25,9 @@ DETECT_SIZE = 800  # pixels the detector works at: bigger finds far creatures be
 ANALYSIS_WIDTH = 960  # images are shrunk to this width before analysis
 COLUMNS = 15  # the view is cut into this many columns, left to right
 HORIZON_BAND = (0.30, 0.62)  # rows (fractions of the height) where something in the way shows
-GROUND_BAND = (0.65, 0.97)  # rows that show the ground in front in nearly every view
+GROUND_BAND = (0.62, 0.84)  # rows that show the ground in front in nearly every view (above the HUD)
 SKY_BAND = (0.0, 0.15)
+GROUND_PERCENTILE = 20  # the ground is found among the farthest points of each row
 BLOCKED = 0.35  # sticking out of the ground by this share of the ground's depth range: in the way
 # Parts of the screen where the player's own hand, tool and HUD are: never creatures.
 NOT_THE_WORLD = ((0.55, 0.55, 1.0, 1.0), (0.0, 0.85, 1.0, 1.0))
@@ -60,10 +61,14 @@ def clearance_from_depth(depth: np.ndarray, columns: int = COLUMNS) -> tuple[flo
 
     if np.median(depth[rows(GROUND_BAND)]) < np.median(depth[rows(SKY_BAND)]):
         depth = 1.0 / np.clip(depth, 1e-6, None)  # a distance: its inverse is the nearness
+    depth = depth.astype(np.float64)  # a copy: the player's hand and the HUD are left out below
+    for x0, y0, x1, y1 in NOT_THE_WORLD:
+        depth[int(y0 * height):int(y1 * height), int(x0 * width):int(x1 * width)] = np.nan
+    # On one row, the ground is the farthest surface: whatever hides it is nearer.
     ground = rows(GROUND_BAND)
-    slope, offset = np.polyfit(fractions[ground], np.median(depth[ground], axis=1), 1)
+    slope, offset = np.polyfit(fractions[ground], np.nanpercentile(depth[ground], GROUND_PERCENTILE, axis=1), 1)
     slope = max(slope, 1e-6)  # the ground gets nearer towards the bottom
-    far = float(np.percentile(depth, 5))
+    far = float(np.nanpercentile(depth, 5))
     expected = np.maximum(slope * fractions + offset, far)  # the ground's nearness, row by row
     unit = slope * (GROUND_BAND[1] - HORIZON_BAND[0])  # the ground's nearness range in view
     band = rows(HORIZON_BAND)
@@ -71,7 +76,7 @@ def clearance_from_depth(depth: np.ndarray, columns: int = COLUMNS) -> tuple[flo
     open_share = []
     for i in range(columns):
         part = sticking_out[:, int(i * width / columns):int((i + 1) * width / columns)]
-        score = float(np.percentile(part, 80))
+        score = float(np.nanpercentile(part, 80))
         open_share.append(min(1.0, max(0.0, 1 - 0.5 * score / BLOCKED)))
     return tuple(open_share)
 
