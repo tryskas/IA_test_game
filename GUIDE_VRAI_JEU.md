@@ -294,7 +294,7 @@ Pour ne plus rester bloquée contre les falaises ni tomber, l'IA apprend à marc
 | Forêt dense | 8 % | se faufiler entre les arbres |
 | Terrasses | 12 % | descendre des gradins : certains sauts sont sans danger, d'autres font mal, des rampes les relient |
 
-Comme dans le vrai jeu, la carte apprise et l'A* donnent le prochain point du chemin, et la marche apprise décide comment y aller. La carte retient ce que les yeux voient. Une direction vue dégagée efface peu à peu une erreur des yeux. Les yeux estiment à quelle distance le sol se dérobe, et le bord est placé à cet endroit sur la carte. Il n'est effacé que si, en regardant là où il devrait être visible (entre 3,5 et 7,6 m devant), le sol paraît sûr.
+Comme dans le vrai jeu, la carte apprise et l'A* donnent le prochain point du chemin, et la marche apprise décide comment y aller. La carte retient ce que les yeux voient. Une direction vue dégagée efface peu à peu une erreur des yeux. Une garde, la même en simulation et dans le vrai jeu, empêche tout pas en avant sur un bord connu de la carte : l'IA peut tourner, mais pas tomber de là. Une chute qui blesse coûte plus de points que n'importe quel raccourci n'en rapporte. Les yeux estiment à quelle distance le sol se dérobe, et le bord est placé à cet endroit sur la carte. Il n'est effacé que si, en regardant là où il devrait être visible (entre 3,5 et 7,6 m devant), le sol paraît sûr.
 
 Elle a les mêmes sens que dans le vrai jeu, toutes les 0,2 s :
 

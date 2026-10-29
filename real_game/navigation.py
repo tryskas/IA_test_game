@@ -24,6 +24,7 @@ CLEAR_FROM = 3.5  # metres: a direction seen clear frees the cells from here to 
 # (nearer, the ground is hidden under the HUD: an edge there can't be seen, so it must not be forgotten)
 EDGE_SEEN = (3.5, 7.6)  # metres ahead where the eyes can tell the ground falls away (5° down)
 EDGE_VOTES = 2  # an edge is dangerous: blocked at the first sighting, until seen safe again
+GUARD_REACH = (0.75, 1.5)  # metres ahead checked before each step forward: never onto a known edge
 MEMORY_REACH = (1.5, 3.0, 4.5)  # metres ahead where the walker recalls what the map knows
 
 
@@ -57,12 +58,22 @@ class TerrainMap:
         return ({c for c, votes in self.blocked.items() if votes >= BLOCK_SCORE} | self.solid
                 | {c for c, votes in self.edges.items() if votes >= BLOCK_SCORE})
 
-    def mark_edge(self, x: float, y: float) -> bool:
+    def mark_edge(self, x: float, y: float, votes: int = EDGE_VOTES) -> bool:
         """The ground falls away at (x, y). Returns True if the cell just became blocked."""
         cell = self.cell(x, y)
         before = self.is_blocked(cell)
-        self.edges[cell] = min(self.edges.get(cell, 0) + EDGE_VOTES, SIGHT_CAP)
+        self.edges[cell] = min(self.edges.get(cell, 0) + votes, SIGHT_CAP)
         return not before and self.is_blocked(cell)
+
+    def edge_ahead(self, x: float, y: float, facing: float) -> bool:
+        """Would a step forward go onto an edge the map knows? (The guard against falling.)"""
+        angle = math.radians(facing)
+        here = self.cell(x, y)
+        for d in GUARD_REACH:
+            cell = self.cell(x + d * math.cos(angle), y + d * math.sin(angle))
+            if cell != here and self.edges.get(cell, 0) >= BLOCK_SCORE:
+                return True
+        return False
 
     def mark_blocked(self, x: float, y: float, strength: int = 1, solid: bool = False) -> bool:
         """Something is in the way at (x, y): seen (counts as a vote), or `solid` when the player

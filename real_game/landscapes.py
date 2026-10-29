@@ -118,12 +118,12 @@ def _way_down(rng, x, y, edge, height: float, stairs: bool) -> np.ndarray:
     added = np.zeros_like(x)
     start, along = rng.uniform(12, y.shape[0] - 20), x - edge
     if not stairs or rng.random() < 0.6:  # a ramp, gentle enough to walk up
-        width, slope = rng.uniform(4, 7), rng.uniform(0.25, 0.4)
+        width, slope = rng.uniform(6, 9), rng.uniform(0.25, 0.4)
         length = height / slope
         strip = (y >= start) & (y < start + width) & (along >= 0) & (along < length)
         added[strip] = (height * (1 - along / length))[strip]
     else:  # steps going down, low enough that the eyes don't take them for an edge
-        width = rng.uniform(5, 9)
+        width = rng.uniform(6, 10)
         drop = rng.uniform(0.8, 1.5)
         tread = rng.uniform(1.5, 3)
         steps = math.ceil(height / drop)
@@ -176,7 +176,7 @@ def make_landscape(rng: np.random.Generator, kind: str | None = None, size: int 
             start, goal = goal, start
     elif kind == "canyon":
         line = _winding(rng, y, middle + rng.uniform(-10, 10), 10)
-        trench = (np.abs(x - line) < rng.uniform(6, 12) / 2) & ~_gaps(rng, y, rng.integers(1, 3), (3, 5))
+        trench = (np.abs(x - line) < rng.uniform(6, 12) / 2) & ~_gaps(rng, y, rng.integers(1, 3), (6, 9))
         h -= rng.uniform(12, 25) * trench
         start, goal = x < line - 10, x > line + 10
     elif kind == "terraces":
@@ -184,7 +184,7 @@ def make_landscape(rng: np.random.Generator, kind: str | None = None, size: int 
         for edge in np.linspace(34, size - 34, int(rng.integers(5, 10))):  # higher on the left; some drops hurt
             level += (x < edge) * (rng.uniform(5, 8) if rng.random() < 0.3 else rng.uniform(1.5, 3.0))
         smooth = level.max() * np.clip((size - 20 - x) / (size - 40), 0, 1)  # ramps: the same descent, gently
-        h += np.where(_gaps(rng, y, rng.integers(1, 3), (4, 7)), smooth, level)
+        h += np.where(_gaps(rng, y, rng.integers(1, 3), (6, 9)), smooth, level)
         start, goal = x < 30, x > size - 30
     else:
         raise ValueError(kind)

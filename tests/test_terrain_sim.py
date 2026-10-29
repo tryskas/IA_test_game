@@ -55,16 +55,29 @@ class WalkEnvTest(unittest.TestCase):
         self.assertTrue(env.map.is_blocked(env.map.cell(env.x + 1.5, env.y)))
         self.assertGreaterEqual(env.stuck, STUCK_STEPS)
 
-    def test_a_drop_is_seen_then_hurts_or_kills(self):
+    def test_a_drop_is_seen_and_the_guard_holds_back(self):
+        h = FLAT.copy()
+        h[:, 70:] = -20.0  # the ground falls away 5 m east of the start
+        env = WalkEnv(noise=False, terrain=h)
+        env.reset(seed=0, options={"start": (65, 64), "goal": (40.5, 64.5), "facing": 0.0})
+        self.assertTrue(env.observe()[2 * COLUMNS + COLUMNS // 2])  # the edge is seen
+        infos = walk(env, [0] * 10)
+        self.assertFalse(any(i["fell"] for i in infos))
+        self.assertTrue(infos[-1]["held"])
+        self.assertLess(env.x, 70)
+
+    def test_an_edge_never_seen_hurts_or_kills(self):
+        from navigation import TerrainMap
+
         for depth, dead in ((9.0, False), (20.0, True)):
             h = FLAT.copy()
-            h[:, 70:] = -depth  # the ground falls away 6 m east of the start
+            h[:, 70:] = -depth
             env = WalkEnv(noise=False, terrain=h)
-            env.reset(seed=0, options={"start": (65, 64), "goal": (40.5, 64.5), "facing": 0.0})
-            self.assertTrue(env.observe()[2 * COLUMNS + COLUMNS // 2])  # the edge is seen
-            infos = walk(env, [0] * 8)
-            self.assertTrue(any(i["fell"] for i in infos))
-            self.assertEqual(any(i["dead"] for i in infos), dead)
+            env.reset(seed=0, options={"start": (69, 64), "goal": (40.5, 64.5), "facing": 0.0})
+            env.map = TerrainMap()  # too close to have seen it
+            info = walk(env, [0])[0]
+            self.assertTrue(info["fell"])
+            self.assertEqual(info["dead"], dead)
             self.assertLess(env.hp, 100)
 
     def test_jumping_gets_up_a_step(self):

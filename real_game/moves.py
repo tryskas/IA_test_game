@@ -286,6 +286,7 @@ class Mover:
                 if last_z - player.z > FALL_DROP:
                     self.log("  chute : je retiens ce bord")
                     self.terrain.mark_blocked(*last_spot, strength=BLOCK_NOW, solid=True)
+                    self.terrain.mark_edge(*last_spot, votes=4)
                     path = self._plan(player, goal)
                 last_z, last_spot = player.z, (player.x, player.y)
                 if self._learn_from_eyes(player) and not self.terrain.route_is_clear((player.x, player.y), path[:2], goal):
@@ -319,17 +320,20 @@ class Mover:
                 obs = observe(self._fresh_view(), pitch, self.terrain, player.x, player.y, self.facing(player),
                               path[0], player.hp, stuck, previous)
                 action = self.walker.act(obs)
-                wants_forward = action in FORWARD_ACTIONS
+                turn = {1: -STEER, 2: STEER, 3: -TURN, 4: TURN}.get(action, 0.0)
+                facing = self.facing(player)
+                wants_forward = action in FORWARD_ACTIONS and not (  # the guard: never onto a known edge
+                    self.terrain.edge_ahead(player.x, player.y, facing)
+                    or self.terrain.edge_ahead(player.x, player.y, facing + turn))
                 if wants_forward != forward:
                     (self.raw.hold if wants_forward else self.raw.release)(KEYS["forward"])
                     forward = wants_forward
                 left = DT
-                if action == 5:  # jump while walking
+                if action == 5 and wants_forward:  # jump while walking
                     self.raw.hold(KEYS["jump"])
                     self.raw.wait(TAP_S)
                     self.raw.release(KEYS["jump"])
                     left -= TAP_S
-                turn = {1: -STEER, 2: STEER, 3: -TURN, 4: TURN}.get(action, 0.0)
                 if turn:
                     self.turn(turn, speed=1.3 * abs(turn) / left)  # smooth, lasts the step
                 else:

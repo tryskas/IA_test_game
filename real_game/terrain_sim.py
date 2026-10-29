@@ -38,7 +38,8 @@ FORWARD_ACTIONS = (0, 1, 2, 5)
 GOAL_REACHED = 2.5
 WAYPOINT_REACHED = 2.5  # as moves.WAYPOINT_REACHED
 MAX_STEPS = 800  # 160 s: enough to walk along a whole cliff to find the way down
-FALL_COST = 0.3  # reward lost per point of health lost falling
+FALL_COST = 0.3  # reward lost per point of health lost falling...
+FALL_PENALTY = 15.0  # ...plus this for any fall that hurts: more than any shortcut could save
 DEATH_COST = 50.0
 STALE_VIEW = 0.3  # chance that the eyes have nothing new this step (the real depth model is slower)
 JUMP_COST = 0.05  # jumping for nothing looks odd: only when it helps
@@ -263,8 +264,10 @@ class WalkEnv(gym.Env):
         reward, terminated = -0.02, False
         turn = {1: -STEER, 2: STEER, 3: -TURN, 4: TURN}.get(action, 0.0)
         self.facing = (self.facing + turn * self.turn_scale + 180) % 360 - 180
-        bumped = fell = False
-        if action in FORWARD_ACTIONS:
+        bumped = fell = held = False
+        if action in FORWARD_ACTIONS and self.map.edge_ahead(self.x, self.y, self.facing):
+            held = True  # the guard, as in the real game: no step onto a known edge
+        elif action in FORWARD_ACTIONS:
             nx = self.x + self.speed * DT * math.cos(math.radians(self.facing))
             ny = self.y + self.speed * DT * math.sin(math.radians(self.facing))
             rise = self.height(nx, ny) - self.z
@@ -276,9 +279,10 @@ class WalkEnv(gym.Env):
                 if -rise > SAFE_FALL:
                     fell = True
                     self.map.mark_blocked(self.x, self.y, strength=BLOCK_SCORE, solid=True)  # the edge it fell from
+                    self.map.mark_edge(self.x, self.y, votes=4)
                     harm = 100.0 * (-rise - SAFE_FALL) / (DEADLY_FALL - SAFE_FALL)
                     self.hp -= harm
-                    reward -= FALL_COST * min(harm, 100.0)
+                    reward -= FALL_PENALTY + FALL_COST * min(harm, 100.0)
                 self.x, self.y, self.z = nx, ny, self.height(nx, ny)
                 self.map.mark_free(self.x, self.y)
         self.stuck = self.stuck + 1 if bumped else 0
@@ -303,7 +307,7 @@ class WalkEnv(gym.Env):
         self.steps += 1
         self.previous = action
         truncated = not terminated and self.steps >= MAX_STEPS
-        info = {"reached": after <= GOAL_REACHED, "dead": self.hp <= 0, "fell": fell, "bumped": bumped,
+        info = {"reached": after <= GOAL_REACHED, "dead": self.hp <= 0, "fell": fell, "bumped": bumped, "held": held,
                 "kind": self.kind}
         return observation, reward, terminated, truncated, info
 
