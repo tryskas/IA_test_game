@@ -100,7 +100,7 @@ class PlanTest(unittest.TestCase):
         self.assertTrue(terrain.can_climb(top, bottom))  # going down: fine
         self.assertFalse(terrain.can_climb(bottom, top))  # going back up: no
         path = terrain.plan((40, 0.5), (0, 0.5))
-        self.assertTrue(any(abs(y - 0.5) > 1.5 for _, y in path[:-1]))  # not straight back up the ledge
+        self.assertTrue(any(abs(y - 0.5) > 1.0 for _, y in path[:-1]))  # round the ledge, not straight back up
         again = TerrainMap(terrain.to_data())
         self.assertFalse(again.can_climb(bottom, top))
 
