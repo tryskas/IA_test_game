@@ -92,17 +92,27 @@ class TerrainMap:
         self.edges.pop(cell, None)
         self.solid.discard(cell)
 
-    def _seen_clear(self, votes: dict, x: float, y: float, angle: float, start: float, end: float) -> None:
-        """Nothing seen from `start` to `end` metres in that direction: cells there lose a vote."""
+    def _ray(self, x: float, y: float, angle: float, start: float, end: float) -> set[tuple[int, int]]:
+        """The cells from `start` to `end` metres in that direction."""
         steps = int((end - start) / (CELL / 2)) + 1
         cos, sin = math.cos(angle), math.sin(angle)
-        cells = {self.cell(x + (start + k * CELL / 2) * cos, y + (start + k * CELL / 2) * sin) for k in range(steps)}
-        for cell in cells - self.solid:
+        return {self.cell(x + (start + k * CELL / 2) * cos, y + (start + k * CELL / 2) * sin) for k in range(steps)}
+
+    def _vote(self, votes: dict, seen: set, clear: set, strength: int) -> bool:
+        """One look: cells seen gain `strength` votes, cells seen clear lose one, each once
+        (several directions often cross the same cell). True if a cell just became blocked."""
+        changed = False
+        for cell in seen:
+            before = self.is_blocked(cell)
+            votes[cell] = min(votes.get(cell, 0) + strength, SIGHT_CAP)
+            changed |= not before and self.is_blocked(cell)
+        for cell in clear - seen - self.solid:
             count = votes.get(cell, 0)
             if count > 1:
                 votes[cell] = min(count, SIGHT_CAP) - 1
             elif count:
                 del votes[cell]
+        return changed
 
     def mark_danger(self, x: float, y: float) -> None:
         self.dangers.append((x, y))
@@ -113,28 +123,29 @@ class TerrainMap:
 
     def note_sight(self, x: float, y: float, facing: float, bearings, distances, drops,
                    drop_ahead: float = DROP_AHEAD, reach: float = 12.0) -> bool:
-        """Put on the map what is seen from (x, y): per direction (degrees from `facing`), the
-        distance of what is in the way (None: nothing within `reach`) and of where the ground falls
-        away (None: it doesn't; True: it does, distance unknown). What is seen clear loses a vote:
-        mistakes of the eyes are undone, but an edge only where an edge could have been seen.
+        """Put on the map what one look shows from (x, y): per direction (degrees from `facing`),
+        the distance of what is in the way (None: nothing within `reach`) and of where the ground
+        falls away (None: it doesn't; True: it does, distance unknown). What is seen clear loses a
+        vote: mistakes of the eyes are undone, but an edge only where an edge could have been seen.
         True if a cell just became blocked."""
-        changed = False
+        walls, open_, edges, safe = set(), set(), set(), set()
         for bearing, distance, drop in zip(bearings, distances, drops):
             angle = math.radians(facing + bearing)
+            cos, sin = math.cos(angle), math.sin(angle)
             if drop is True:
                 drop = drop_ahead
             elif drop is False:
                 drop = None
             if distance is None:
-                self._seen_clear(self.blocked, x, y, angle, CLEAR_FROM, reach)
+                open_ |= self._ray(x, y, angle, CLEAR_FROM, reach)
             else:
-                changed |= self.mark_blocked(x + distance * math.cos(angle), y + distance * math.sin(angle))
-            if drop is None:
-                if distance is None or distance > EDGE_SEEN[1]:
-                    self._seen_clear(self.edges, x, y, angle, *EDGE_SEEN)
-            else:
-                changed |= self.mark_edge(x + drop * math.cos(angle), y + drop * math.sin(angle))
-        return changed
+                walls.add(self.cell(x + distance * cos, y + distance * sin))
+            if drop is not None:
+                edges.add(self.cell(x + drop * cos, y + drop * sin))
+            elif distance is None or distance > EDGE_SEEN[1]:
+                safe |= self._ray(x, y, angle, *EDGE_SEEN)
+        changed = self._vote(self.blocked, walls, open_, 1)
+        return self._vote(self.edges, edges, safe, EDGE_VOTES) or changed
 
     def blocked_ahead(self, x: float, y: float, facing: float, bearings,
                       reach: tuple[float, ...] = MEMORY_REACH) -> list[float | None]:

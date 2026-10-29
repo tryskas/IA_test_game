@@ -189,8 +189,13 @@ class WalkEnv(gym.Env):
         distance = np.where(first >= 0, steps[np.maximum(first, 0)], np.inf)
         ahead = (steps >= DROP_SEEN[0]) & (steps <= DROP_SEEN[1])
         before_wall = steps[None, :] < distance[:, None]
-        edge = (change < STEEP_DOWN) & ahead[None, :] & before_wall
-        edge_at = np.where(edge.any(axis=1), steps[edge.argmax(axis=1)], np.inf)
+        sudden = (change < STEEP_DOWN) & before_wall  # the ground falls away within a metre: an edge
+        first = sudden.argmax(axis=1)
+        top = ground[np.arange(COLUMNS), first]  # the ground just before the edge
+        # Beyond the edge, the void shows, even when the edge itself is hidden under the HUD
+        fallen = (sudden.any(axis=1)[:, None] & (np.arange(len(steps))[None, :] >= first[:, None])
+                  & (ground[:, 2:] < top[:, None] + STEEP_DOWN) & ahead[None, :] & before_wall)
+        edge_at = np.where(fallen.any(axis=1), steps[fallen.argmax(axis=1)], np.inf)
         if self.noise:  # the real analysis misses things, and sometimes sees what isn't there
             flip = rng.random(COLUMNS) < 0.06
             distance = np.where(flip & np.isinf(distance), rng.uniform(NEAREST_SEEN, TRUST, COLUMNS),
