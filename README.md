@@ -86,6 +86,12 @@ Apprendre à l'IA à marcher en terrain accidenté (falaises, ravins, rochers) p
 python train_walk.py
 ```
 
+Regarder l'IA marcher sur ces terrains simulés, vus de dessus (touches 1, 2, 3 pour changer de marcheur, N pour un autre paysage) :
+
+```bash
+python watch_walk.py
+```
+
 Comparer les joueurs dans le terminal :
 
 ```bash
@@ -109,7 +115,7 @@ python play.py --joueur ia
 | `mini_satisfactory/ai_player.py` | L'IA entraînée, branchée comme un joueur |
 | `mini_satisfactory/replay.py` | Enregistre une partie, un instantané toutes les 2 s de jeu |
 | `mini_satisfactory/viewer.py` | La fenêtre pygame |
-| `watch.py`, `train.py`, `train_walk.py`, `play.py` | Les commandes ci-dessus |
+| `watch.py`, `train.py`, `train_walk.py`, `watch_walk.py`, `play.py` | Les commandes ci-dessus |
 | `real_game/` | Les scripts pour le vrai jeu : capture d'écran, données du mod, clavier et souris, lecture du texte (voir le guide) |
 | `models/ia_tier0.zip` | L'IA entraînée, créée par `train.py` |
 | `tests/` | Tests automatiques |

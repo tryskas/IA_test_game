@@ -299,6 +299,14 @@ python train_walk.py
 
 Il affiche d'abord les résultats de deux marcheurs simples (au hasard, règle simple), puis ceux de l'IA tous les 150 000 pas, sur 100 paysages qu'elle n'a jamais vus : part d'arrivées, de chutes et de morts. Le meilleur marcheur est enregistré dans `models/marche.zip`.
 
+Pour regarder l'IA marcher sur ces paysages, vus de dessus, avec ce que voient ses yeux et ce que retient sa carte :
+
+```bash
+python watch_walk.py
+```
+
+Touches : 1 IA entraînée, 2 règle simple, 3 hasard, N autre paysage, + et - pour la vitesse.
+
 `python real_game/agent.py jouer` l'utilise ensuite dès que la vision est active : le message « Marche apprise : models/marche.zip » s'affiche. Ajoute `--marche-classique` pour revenir à l'ancienne marche. Pour refaire la comparaison sans réentraîner :
 
 ```bash
