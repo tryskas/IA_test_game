@@ -95,7 +95,7 @@ class PlanTest(unittest.TestCase):
         for x in range(0, 22):
             terrain.mark_free(x + 0.5, 0.5, 10.0)  # on top
         for x in range(22, 41):
-            terrain.mark_free(x + 0.5, 0.5, 6.0)  # 4 m lower, after the ledge
+            terrain.mark_free(x + 0.5, 0.5, 7.0)  # 3 m lower, after the ledge: fine to jump down, not up
         top, bottom = terrain.cell(19, 0.5), terrain.cell(23, 0.5)
         self.assertTrue(terrain.can_climb(top, bottom))  # going down: fine
         self.assertFalse(terrain.can_climb(bottom, top))  # going back up: no
