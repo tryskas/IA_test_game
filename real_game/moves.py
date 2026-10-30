@@ -464,6 +464,10 @@ class Mover:
         self.raw.release(KEYS["interact"])
         self.raw.wait(0.35)
 
+    def amount(self, item: str) -> float:
+        """How much of a mini-game item (e.g. "iron_ore") is carried."""
+        return self._amount(item)
+
     def _amount(self, item: str) -> float:
         return self.raw.player().inventory.get(item, 0)
 

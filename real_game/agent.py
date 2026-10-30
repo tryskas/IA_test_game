@@ -8,6 +8,7 @@ Single skills, to test them one by one:
     python real_game/agent.py construire hub            # also: etabli, atelier
     python real_game/agent.py aller fer                 # walk to the nearest free iron node
     python real_game/agent.py miner fer 10              # mine 10 iron ore by hand (also: cuivre, calcaire)
+    python real_game/agent.py foreuses fer 100          # place the portable miners on iron, collect 100
     python real_game/agent.py fabriquer "Barre de fer" 5
     python real_game/agent.py jalon                     # choose the next milestone at the HUB terminal
     python real_game/agent.py deposer                   # give the HUB terminal what it needs
@@ -34,6 +35,7 @@ from defense import defend, respawn
 from game_io import Died, RealGame, Stopped, UnderAttack
 from game_state import ROOT, fetch, read_player
 from menus import HEIGHTS_FILE, Memory, Menus, no_sightings
+from miners import PortableMiners
 from moves import Calibration, Mover, SkillError, calibrate
 from planner import RAW, Plan, Step, choose_base, next_step, parse_schematics
 from screen import Screen
@@ -179,7 +181,11 @@ def do(step: Step, game: RealGame, mover: Mover, menus: Menus) -> None:
     elif step.kind == "deposit":
         print(f"  {deposit_at_terminal(menus, step.milestone.cls)} piles déposées")
     elif step.kind == "mine":
-        print(f"  {mover.mine_by_hand(RAW[step.item], step.count)} minés")
+        resource = RAW[step.item]
+        got = PortableMiners(game, mover, menus, menus.memory).mine(resource, step.count)
+        if got is None:  # no portable miner: by hand
+            got = mover.mine_by_hand(resource, step.count)
+        print(f"  {got} minés")
     elif step.kind == "craft":
         wanted = step.count * step.recipe.outputs[step.item]
         print(f"  {menus.craft(step.recipe.name, step.item, int(wanted))} fabriqués")
@@ -311,11 +317,11 @@ def main() -> None:
     parser.add_argument("--vision-precise", action="store_true",
                         help="modèle de profondeur plus gros : terrain mieux mesuré, mais plus lent")
     parser.add_argument("commande", choices=["calibrer", "jouer", "equiper", "construire", "aller", "miner", "voir",
-                                             "fabriquer", "jalon", "deposer"])
+                                             "fabriquer", "jalon", "deposer", "foreuses"])
     parser.add_argument("quoi", nargs="?", help="ressource, bâtiment ou recette")
     parser.add_argument("quantite", nargs="?", type=int, default=10)
     args = parser.parse_args()
-    if args.commande in ("aller", "miner") and args.quoi not in RESOURCES:
+    if args.commande in ("aller", "miner", "foreuses") and args.quoi not in RESOURCES:
         parser.error("indique la ressource : fer, cuivre ou calcaire")
     if args.commande == "construire" and args.quoi not in BUILDINGS:
         parser.error("indique le bâtiment : hub, etabli ou atelier")
@@ -334,7 +340,7 @@ def main() -> None:
         raise SystemExit("Je ne trouve pas la fenêtre du jeu.")
     game = RealGame()
     eyes = None
-    if not args.sans_vision and args.commande in ("jouer", "aller", "miner", "voir"):
+    if not args.sans_vision and args.commande in ("jouer", "aller", "miner", "voir", "foreuses"):
         from perception import Eyes
 
         print("Chargement de la vision (la première fois, téléchargement des modèles)...")
@@ -401,6 +407,10 @@ def main() -> None:
         elif args.commande == "aller":
             node = mover.go_to_node(RESOURCES[args.quoi])
             print(f"Arrivé au gisement ({node.purity}).")
+        elif args.commande == "foreuses":
+            got = PortableMiners(game, mover, menus, memory).mine(RESOURCES[args.quoi], args.quantite)
+            print("Pas de foreuse portable, ni dans l'inventaire ni posée." if got is None else f"Terminé : {got} minés.")
+            save_map(mover, memory)
         elif args.commande == "miner":
             print(f"Terminé : {mover.mine_by_hand(RESOURCES[args.quoi], args.quantite)} minés.")
         elif args.commande == "fabriquer":

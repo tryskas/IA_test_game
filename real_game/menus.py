@@ -24,6 +24,7 @@ MEMORY_FILE = Path(__file__).resolve().parent / "memory.json"
 HEIGHTS_FILE = Path(__file__).resolve().parent / "heights.npz"  # the 3D map of the ground
 REFERENCE_WIDTH, REFERENCE_HEIGHT = 2560, 1440  # screen size the offsets below were measured on
 ZAPPER_OFFSET = (61, 49)  # from the left of « Raccourcis d'équipement » to the first equipment slot
+SHORTCUT_GAP = 61  # between two equipment shortcuts (demo of the portable miner)
 BUILD_TILES_BELOW = 0.21  # build menu: results are under this height (fraction of the screen)
 PLACE_TURNS = (0, 45, -45, 90, -90, 135, -135, 180)  # directions tried to find room for a building
 PLACE_PITCHES = (25, 20, 30, 15)  # degrees below the horizon: about 3 to 6 m ahead, near first
@@ -162,6 +163,28 @@ class Menus:
         if carried():
             raise SkillError("le repousse-xénos n'a pas été équipé")
         return True
+
+    def equip(self, item_class: str, tries: int = 3) -> bool:
+        """Put an equipment (game class name) in hand: double-click on it among the inventory's
+        equipment shortcuts, trying them one after the other. False if it isn't carried."""
+        def carried() -> float:
+            return self.raw.player().by_class.get(item_class, 0)
+
+        if not carried():
+            return False
+        for slot in range(tries):
+            self.press(KEYS["inventory"])
+            label = self.screen.wait_for("Raccourcis d'équipement", "inventory")
+            if label is None:
+                self.press(KEYS["close"])
+                raise SkillError("l'inventaire ne s'ouvre pas")
+            self.click_at(label.left + (ZAPPER_OFFSET[0] + SHORTCUT_GAP * slot) * self.sx,
+                          label.y + ZAPPER_OFFSET[1] * self.sy, double=True)
+            self.raw.wait(0.5)
+            self.press(KEYS["inventory"])
+            if not carried():
+                return True
+        raise SkillError("je n'arrive pas à prendre cet équipement en main")
 
     # Build menu -------------------------------------------------------------------------
 

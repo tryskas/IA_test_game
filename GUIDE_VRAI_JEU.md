@@ -249,7 +249,13 @@ python real_game/agent.py jalon
 python real_game/agent.py deposer
 ```
 
-6. **Jouer** : l'IA fait le début de partie si besoin (équiper, HUB, établi), puis remplit les jalons l'un après l'autre. Avant de poser le HUB, elle va s'installer entre un gisement de fer et un de cuivre proches l'un de l'autre (moins de 150 m, à peu près à la même hauteur, près du calcaire si possible) : chaque aller-retour pour miner est court. Elle choisit le jalon le moins coûteux et calcule tout ce qu'il demande, jusqu'au minerai, en tenant compte de ce qu'elle porte déjà. Elle mine tout d'un coup (300 au plus par voyage ; pour « Étude sur le terrain », 150 cuivre pour 300 fils), fabrique tout en une visite à l'établi (béton à partir du calcaire, fil à partir du cuivre...), puis va tout déposer au terminal. Son plan est calculé à partir des données du jeu : coûts restants, recettes débloquées. Pour l'instant, tout est fait à la main : les machines viendront ensuite.
+6. **Jouer** : l'IA fait le début de partie si besoin (équiper, HUB, établi), puis remplit les jalons l'un après l'autre. Avant de poser le HUB, elle va s'installer entre un gisement de fer et un de cuivre proches l'un de l'autre (moins de 150 m, à peu près à la même hauteur, près du calcaire si possible) : chaque aller-retour pour miner est court. Elle choisit le jalon le moins coûteux et calcule tout ce qu'il demande, jusqu'au minerai, en tenant compte de ce qu'elle porte déjà. Elle mine tout d'un coup (300 au plus par voyage ; pour « Étude sur le terrain », 150 cuivre pour 300 fils), fabrique tout en une visite à l'établi (béton à partir du calcaire, fil à partir du cuivre...), puis va tout déposer au terminal.
+
+   **Foreuses portables** : si l'IA en a dans son inventaire, elle les pose toutes sur le gisement du minerai dont elle a besoin (environ 40 minerais par minute chacune, bien plus qu'à la main). Elle récupère le minerai toutes les 45 s avec « Tout récupérer », jusqu'à en avoir assez. Pour un autre minerai, elle les reprend avec « Ramasser la foreuse » et les repose sur le bon gisement. Elle retient où elles sont posées. Pour les essayer seules :
+
+```bash
+python real_game/agent.py foreuses fer 100
+``` Son plan est calculé à partir des données du jeu : coûts restants, recettes débloquées. Pour l'instant, tout est fait à la main : les machines viendront ensuite.
 
 ```bash
 python real_game/agent.py jouer
