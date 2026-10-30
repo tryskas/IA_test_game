@@ -179,11 +179,13 @@ class View:
 
 
 def threats_from_boxes(boxes, width: int, height: int, fov: float) -> tuple[Threat, ...]:
-    """Detections (x0, y0, x1, y1, score, label) -> threats, leaving out the player's own hand and HUD."""
+    """Detections (x0, y0, x1, y1, score, label) -> threats, leaving out the player's own hand and
+    HUD: what lies entirely in their corner. A creature right next to the player reaches out of it."""
     found = []
     for x0, y0, x1, y1, score, label in boxes:
         cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
-        if any(a * width <= cx <= c * width and b * height <= cy <= d * height for a, b, c, d in NOT_THE_WORLD):
+        if any(a * width <= x0 and x1 <= c * width and b * height <= y0 and y1 <= d * height
+               for a, b, c, d in NOT_THE_WORLD):
             continue
         found.append(Threat(bearing_of(cx, width, fov), vertical_of(cy, height, width, fov),
                             (y1 - y0) / height, score, label, (x0, y0, x1, y1)))

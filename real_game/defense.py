@@ -1,4 +1,6 @@
-"""Staying alive: face a creature and strike it, run away, get back up after dying."""
+"""Staying alive: face a creature and strike it, run away, get back up after dying.
+
+Health doesn't come back by itself in the game: resting is useless, fighting well matters."""
 from __future__ import annotations
 
 from config import KEYS
@@ -18,12 +20,11 @@ CALM_S = 4  # no damage for this long: whatever is around is not a danger
 HURT_MEMORY_S = 5  # still fighting back this long after the last hit
 IGNORE_HARMLESS_S = 20  # don't stop again for a harmless creature during this time
 FLEE_S = 8
-REST_BELOW = 60  # after a fight, rest at the HUB below this health...
-REST_UNTIL = 90  # ...until this much, as long as it keeps coming back
 RESPAWN_WORDS = ("Réapparaître", "Réapparition", "Respawn", "Revivre")
 
 
-def defend(game, mover: Mover, eyes, home: tuple[float, float] | None, hurt: bool, log=print) -> str:
+def defend(game, mover: Mover, eyes, home: tuple[float, float] | None, hurt: bool, log=print,
+           charging: bool = False) -> str:
     """Deal with a creature or an attack. Returns "safe", "harmless" or "fled".
 
     Not every creature is hostile: strike only when losing health, when the
@@ -37,6 +38,7 @@ def defend(game, mover: Mover, eyes, home: tuple[float, float] | None, hurt: boo
     try:
         start = calm_since = game.now()
         hurt_at = start if hurt else -1e9
+        charged_at = start if charging else -1e9  # a creature was coming at us
         last_hp = game.player().hp
         sizes: list[tuple[float, float]] = []  # (time, size) of the creature watched
         looks = 0
@@ -57,6 +59,10 @@ def defend(game, mover: Mover, eyes, home: tuple[float, float] | None, hurt: boo
             if threat is None:
                 if quiet and now - calm_since > CALM_S:
                     return "safe"
+                if now - hurt_at < 1.0:
+                    game.click()  # just hit: the attacker may be right in front, unseen
+                if looks == 0:
+                    log("  je cherche l'attaquant")
                 mover.turn(180 if looks % 3 == 0 else 90)  # attackers often come from behind
                 looks += 1
                 game.wait(0.25)
@@ -68,7 +74,8 @@ def defend(game, mover: Mover, eyes, home: tuple[float, float] | None, hurt: boo
                 return "harmless"
             mover.turn(threat.bearing, speed=400)
             mover.tilt(threat.below, speed=400)
-            hostile = now - hurt_at < HURT_MEMORY_S or approaching or threat.size >= POINT_BLANK
+            hostile = (now - hurt_at < HURT_MEMORY_S or now - charged_at < HURT_MEMORY_S or approaching
+                       or threat.size >= POINT_BLANK)
             if hostile and threat.size >= STRIKE_SIZE:
                 log(f"  je frappe ({threat.label})")
                 for _ in range(3):
@@ -125,22 +132,6 @@ def rush(game, mover: Mover, eyes, log=print) -> None:
         game.release(KEYS["sprint"])
 
 
-def recover(game, mover: Mover, home: tuple[float, float] | None, log=print) -> None:
-    """Low on health: go back to the HUB and wait while health comes back."""
-    if game.player().hp >= REST_BELOW:
-        return
-    log("  peu de vie : je rentre me reposer au HUB")
-    if home is not None:
-        mover.walk_to(*home, radius=5.0)
-    last, still = game.player().hp, 0.0
-    while last < REST_UNTIL and still < 15:
-        game.wait(1.5)
-        hp = game.player().hp
-        still = 0.0 if hp > last else still + 1.5
-        last = hp
-    log(f"  vie : {last:.0f}")
-
-
 def flee(game, mover: Mover, home: tuple[float, float] | None, log=print) -> None:
     """Run towards home (the HUB) if known, along a safe way; else straight back, jumping now
     and then, stopping before a known edge."""
@@ -173,18 +164,21 @@ def flee(game, mover: Mover, home: tuple[float, float] | None, log=print) -> Non
 
 
 def respawn(game, screen, log=print) -> None:
-    """After death: find the respawn button, click it, wait to be alive again."""
+    """After death: right-click, as the game asks (« Appuyez sur Clic droit pour réapparaître »),
+    and wait to be alive again. Now and then, click the message itself, in case it is a button."""
     game.alarms = False
     try:
-        for _ in range(20):
+        for attempt in range(20):
             if not read_player().dead:
                 log("  de nouveau en vie")
                 return
-            for word in RESPAWN_WORDS:
-                button = screen.find(word, "center")
-                if button is not None:
-                    game.click_at(button.x, button.y)
-                    break
+            game.click("right")
+            if attempt % 4 == 3:
+                for word in RESPAWN_WORDS:
+                    button = screen.find(word, "center")
+                    if button is not None:
+                        game.click_at(button.x, button.y)
+                        break
             game.wait(1.5)
         raise SkillError("je n'arrive pas à réapparaître")
     finally:

@@ -17,7 +17,9 @@ NODES_REFRESH_S = 30
 
 
 HEALTH_CHECK_S = 0.5
-CLOSE_THREAT = 0.18  # a creature this big on screen (share of its height) is too close to ignore
+POINT_BLANK = 0.35  # a creature this big on screen (share of its height) is right there
+CHARGE_GROWTH, CHARGE_S, CHARGE_FROM = 1.3, 1.5, 0.12  # grown this much within this time, from this
+# size at least: the creature is coming at the player. Creatures that just wander about are left alone.
 FALL_Z = 2.0  # metres lost in height since the last look: health lost then comes from a fall
 
 
@@ -28,9 +30,10 @@ class Stopped(Exception):
 class UnderAttack(Exception):
     """The player is losing health, or a creature is close: whatever was being done must stop."""
 
-    def __init__(self, reason: str, hurt: bool):
+    def __init__(self, reason: str, hurt: bool, charging: bool = False):
         super().__init__(reason)
         self.hurt = hurt
+        self.charging = charging  # a creature is coming at the player
 
 
 class Died(Exception):
@@ -50,6 +53,7 @@ class RealGame:
         self.eyes = None  # perception.Eyes, when the AI can see
         self.ignore_sightings_until = 0.0  # after meeting a harmless creature, don't stop for it again
         self._last_z: float | None = None
+        self._sizes: list[tuple[float, float]] = []  # (time seen, size) of the nearest creature
         self._watch_stop_key()
 
     def _watch_stop_key(self) -> None:
@@ -74,9 +78,17 @@ class RealGame:
         if (self.alarms and view is not None and time.perf_counter() - view.taken_at < 1.0
                 and time.perf_counter() > self.ignore_sightings_until):
             threat = view.nearest_threat()
-            if threat is not None and threat.size >= CLOSE_THREAT:
-                self.release_all()
-                raise UnderAttack(f"créature en vue ({threat.label})", hurt=False)
+            if threat is None:
+                self._sizes.clear()
+            elif not self._sizes or view.taken_at > self._sizes[-1][0]:
+                self._sizes = [(t, size) for t, size in self._sizes if view.taken_at - t <= CHARGE_S]
+                self._sizes.append((view.taken_at, threat.size))
+                smallest = min(size for _, size in self._sizes)
+                if threat.size >= POINT_BLANK or (threat.size >= CHARGE_FROM
+                                                  and threat.size >= CHARGE_GROWTH * smallest):
+                    self._sizes.clear()
+                    self.release_all()
+                    raise UnderAttack(f"une créature fonce sur moi ({threat.label})", hurt=False, charging=True)
 
 
     # What moves.py uses -------------------------------------------------------

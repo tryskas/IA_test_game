@@ -30,7 +30,7 @@ import warnings
 
 from common import find_game_window
 from config import FOV
-from defense import defend, recover, respawn
+from defense import defend, respawn
 from game_io import Died, RealGame, Stopped, UnderAttack
 from game_state import ROOT, fetch, read_player
 from menus import Memory, Menus, no_sightings
@@ -44,6 +44,7 @@ warnings.filterwarnings("ignore", message=".*quantize_per_tensor.*")
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 BUILD_TRIES = 3  # no room for a building: go somewhere else this many times
+LOW_HP = 50  # below this, say so after a fight
 START_TRIES = 6  # the start of the game, interrupted by danger: tried again this many times
 RELOCATE_M = 25.0  # metres walked to look for room elsewhere
 
@@ -200,10 +201,12 @@ def survive(alarm: Exception, game: RealGame, mover: Mover, menus: Menus, memory
         mover.pitch = None  # the view was reset
         return
     print(f"[{stamp()}] Danger : {alarm}")
-    outcome = defend(game, mover, game.eyes, home(), hurt=getattr(alarm, "hurt", True))
+    outcome = defend(game, mover, game.eyes, home(), hurt=getattr(alarm, "hurt", True),
+                     charging=getattr(alarm, "charging", False))
     print({"safe": "  hors de danger", "harmless": "  créature inoffensive, je reprends",
            "fled": "  à l'abri"}[outcome])
-    recover(game, mover, home())
+    if game.hp is not None and game.hp < LOW_HP:
+        print(f"  attention, il me reste {game.hp:.0f} points de vie (ils ne remontent pas tout seuls)")
 
 
 def react(alarm: Exception, game: RealGame, mover: Mover, menus: Menus, memory: Memory, attacks: dict) -> None:

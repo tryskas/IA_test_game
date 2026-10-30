@@ -89,6 +89,12 @@ class ViewTest(unittest.TestCase):
         self.assertLess(threats[0].bearing, -20)
         self.assertAlmostEqual(threats[0].size, 200 / 540)
 
+    def test_a_creature_right_next_to_the_player_is_seen(self):
+        boxes = [(500, 250, 900, 540, 0.4, "animal")]  # big, low on the right: over the hand, but larger
+        threats = threats_from_boxes(boxes, 960, 540, 90)
+        self.assertEqual(len(threats), 1)
+        self.assertGreater(threats[0].bearing, 10)
+
 
 if __name__ == "__main__":
     unittest.main()
