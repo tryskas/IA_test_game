@@ -33,6 +33,10 @@ BLOCK_NOW = 2  # stuck or fell there: blocked at once
 TRUST_SIGHT = 12.0  # metres: obstacles seen farther than this are not put on the map
 DROP_AHEAD = 4.0  # metres: where a drop seen ahead is put on the map
 STEP_S = 0.12  # how often the walk is corrected
+DETOUR_SIDES = (90, -90)  # degrees from the goal's direction: right, then left
+DETOUR_NEAR, DETOUR_FAR = 12.0, 30.0  # metres to the detour's waypoint
+ESCAPE_TURN = 70.0  # degrees turned to go round what keeps blocking the way
+GUARD_ESCAPE = 4.0  # metres ahead checked before stepping off while getting out
 LEARNT_STUCK_S, LEARNT_STUCK_MOVE = 0.6, 0.5  # learnt walk: moved less than this (m) in this time (s), as terrain_sim.STUCK_STEPS
 MINE_RADIUS = 2.5  # metres from the node's centre where we stop to mine
 EYE_HEIGHT = 1.7  # metres
@@ -140,6 +144,7 @@ class Mover:
         self.current_node: Node | None = None
         self.walker = None  # walk_policy.WalkPolicy: the walk learnt in the simulation, if trained
         self._seen_at = 0.0
+        self._detouring = False
 
     def facing(self, player: PlayerView | None = None) -> float:
         return self.cal.facing((player or self.raw.player()).yaw)
@@ -174,6 +179,8 @@ class Mover:
         self._glide(0, degrees_down / self.cal.pitch_per_count, max(0.08, 1.3 * abs(degrees_down) / speed))
         if self.pitch is not None:
             self.pitch += degrees_down
+            if self.eyes is not None:
+                self.eyes.pitch = self.pitch  # to place what they see on the 3D map
 
     def set_pitch(self, degrees_down: float) -> None:
         """Look `degrees_down` below the horizon. The first time, the view is levelled once
@@ -193,7 +200,30 @@ class Mover:
 
     def walk_to(self, x: float, y: float, radius: float = 2.0, timeout: float | None = None) -> bool:
         """Walk to (x, y) along a path worked out on the learnt map, avoiding what is seen
-        in the way and learning where the ground can't be crossed. False if it can't get there."""
+        in the way and learning where the ground can't be crossed. If no way is found, try going
+        round by one side, then by the other. False if it can't get there."""
+        if self._walk(x, y, radius, timeout):
+            return True
+        if timeout is not None or self._detouring:  # a walk with a time limit (fleeing) or a detour itself
+            return False
+        self._detouring = True
+        try:
+            for side in DETOUR_SIDES:
+                player = self.raw.player()
+                distance = math.hypot(x - player.x, y - player.y)
+                if distance <= radius:
+                    return True
+                angle = math.radians(heading(player.x, player.y, x, y) + side)
+                reach = min(DETOUR_FAR, max(DETOUR_NEAR, distance / 2))
+                self.log(f"  je tente un détour par la {'droite' if side > 0 else 'gauche'}")
+                self._walk(player.x + reach * math.cos(angle), player.y + reach * math.sin(angle), 4.0, None)
+                if self._walk(x, y, radius, None):
+                    return True
+            return False
+        finally:
+            self._detouring = False
+
+    def _walk(self, x: float, y: float, radius: float, timeout: float | None) -> bool:
         player = self.raw.player()
         goal = (x, y)
         distance = math.hypot(x - player.x, y - player.y)
@@ -312,21 +342,26 @@ class Mover:
                         self.terrain.mark_blocked(player.x + 1.5 * math.cos(ahead), player.y + 1.5 * math.sin(ahead),
                                                   strength=BLOCK_NOW, solid=True)
                         path = self._plan(player, goal)
-                        if stuck_times % 4 == 0:
-                            self._unstick(stuck_times // 4)
+                        if stuck_times % 2 == 0:  # stuck again: back off and go round
+                            for key, held in ((KEYS["forward"], forward), (KEYS["sprint"], running)):
+                                if held:
+                                    self.raw.release(key)
+                            forward = running = False
+                            moves = []
+                            self._escape(stuck_times // 2)
                     stuck = True
                 elif held_long or not forward:
                     stuck = False
                 pitch = self.pitch if self.pitch is not None else WALK_PITCH
                 obs = observe(self._fresh_view(), pitch, self.terrain, player.x, player.y, self.facing(player),
-                              path[0], player.hp, stuck, previous)
+                              path[0], player.hp, stuck, previous, z=player.z)
                 action = self.walker.act(obs)
                 turn = TURNS.get(action, 0.0)
                 facing = self.facing(player)
                 reach = GUARD_RUN if action in RUN_ACTIONS else GUARD_WALK
                 wants_forward = action in FORWARD_ACTIONS and not (  # the guard: never onto a known edge
-                    self.terrain.edge_ahead(player.x, player.y, facing, reach)
-                    or self.terrain.edge_ahead(player.x, player.y, facing + turn, reach))
+                    self.terrain.edge_ahead(player.x, player.y, facing, reach, z=player.z)
+                    or self.terrain.edge_ahead(player.x, player.y, facing + turn, reach, z=player.z))
                 wants_run = wants_forward and action in RUN_ACTIONS
                 if wants_run != running:
                     (self.raw.hold if wants_run else self.raw.release)(KEYS["sprint"])
@@ -375,10 +410,35 @@ class Mover:
         columns = range(len(view.obstacle_rows))
         drops = drop_distances(view, pitch, DROP_AHEAD)
         drops += [None] * (len(columns) - len(drops))
+        if view.points is not None and view.pose is not None:  # the 3D map of the ground
+            x, y, z, yaw = view.pose
+            self.terrain.heights.add_view(x, y, z, self.cal.facing(yaw), view.points)
         return self.terrain.note_sight(player.x, player.y, self.facing(player),
                                        [view.column_bearing(i) for i in columns],
                                        obstacle_distances(view, pitch, TRUST_SIGHT), drops, DROP_AHEAD,
                                        reach=TRUST_SIGHT)
+
+    def _escape(self, attempt: int) -> None:
+        """Stuck again and again: back off, go round by one side (the other side next time) with a
+        jump, never towards an edge the map knows."""
+        side = ESCAPE_TURN if attempt % 2 else -ESCAPE_TURN
+        self.log(f"  coincée : je recule et je contourne par la {'droite' if side > 0 else 'gauche'}")
+        player = self.raw.player()
+        if not self.terrain.edge_ahead(player.x, player.y, self.facing(player) + 180, z=player.z):
+            self.raw.hold(KEYS["back"])
+            self.raw.wait(0.8)
+            self.raw.release(KEYS["back"])
+        self.turn(side)
+        player = self.raw.player()
+        if self.terrain.edge_ahead(player.x, player.y, self.facing(player), GUARD_ESCAPE, z=player.z):
+            return
+        self.raw.hold(KEYS["forward"])
+        self.raw.wait(0.3)
+        self.raw.hold(KEYS["jump"])
+        self.raw.wait(TAP_S)
+        self.raw.release(KEYS["jump"])
+        self.raw.wait(0.9)
+        self.raw.release(KEYS["forward"])
 
     def _unstick(self, attempt: int) -> None:
         """Jump; after a few tries, also step sideways."""

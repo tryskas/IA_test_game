@@ -25,9 +25,87 @@ CLEAR_FROM = 3.5  # metres: a direction seen clear frees the cells from here to 
 EDGE_SEEN = (3.5, 7.6)  # metres ahead where the eyes can tell the ground falls away (5° down)
 EDGE_VOTES = 2  # an edge is dangerous: blocked at the first sighting, until seen safe again
 GUARD_WALK, GUARD_RUN = 1.5, 3.0  # metres ahead checked before each step forward, walking or running
+DROP_LIMIT = 3.5  # metres: a neighbouring cell this much lower is not gone to (a fall that hurts)
+UNKNOWN_COST = 0.3  # extra cost of a cell never walked: known safe ways are preferred
+HEIGHT_CELL = 1.0  # metres: cells of the 3D map of the ground
+HEIGHT_SEEN = 2  # a height counts once seen this many times
+HEIGHT_WEIGHT = 0.3  # how much a new look changes a height already known
 CLIMB = 2.2  # metres: a neighbouring cell whose ground is known to be this much higher can't be
 # climbed (a ledge; a walkable slope rises less over 2 m), though it can be walked down
 MEMORY_REACH = (1.5, 3.0, 4.5)  # metres ahead where the walker recalls what the map knows
+
+
+class HeightMap:
+    """The ground's height, cell by cell (1 m), measured by the eyes: the depth of every picture,
+    placed in the world from where the player stood. Heights are in the mod's player z units:
+    the height the player would have standing there."""
+
+    def __init__(self):
+        self.cells: dict[tuple[int, int], list[float]] = {}  # cell: [height, times seen]
+
+    def __len__(self) -> int:
+        return len(self.cells)
+
+    def add_view(self, x: float, y: float, z: float, facing: float, points) -> None:
+        """Points seen (ahead, right, height above the player's ground) from (x, y, z), facing `facing`."""
+        import numpy as np
+
+        if points is None or len(points) == 0:
+            return
+        ahead, right, above = points[:, 0], points[:, 1], points[:, 2]
+        cos, sin = math.cos(math.radians(facing)), math.sin(math.radians(facing))
+        ix = np.floor((x + ahead * cos - right * sin) / HEIGHT_CELL).astype(np.int64)
+        iy = np.floor((y + ahead * sin + right * cos) / HEIGHT_CELL).astype(np.int64)
+        heights = z + above
+        keys = ix * 2_000_003 + iy
+        order = np.argsort(keys, kind="stable")
+        keys, ix, iy, heights = keys[order], ix[order], iy[order], heights[order]
+        bounds = np.flatnonzero(np.diff(keys)) + 1
+        for start, end in zip(np.r_[0, bounds], np.r_[bounds, len(keys)]):
+            cell, height = (int(ix[start]), int(iy[start])), float(np.median(heights[start:end]))
+            known = self.cells.get(cell)
+            if known is None:
+                self.cells[cell] = [height, 1]
+            else:
+                known[0] += HEIGHT_WEIGHT * (height - known[0])
+                known[1] = min(known[1] + 1, 50)
+
+    def height(self, x: float, y: float) -> float | None:
+        known = self.cells.get((math.floor(x / HEIGHT_CELL), math.floor(y / HEIGHT_CELL)))
+        return known[0] if known and known[1] >= HEIGHT_SEEN else None
+
+    def sample(self, xs, ys):
+        """Heights at many points at once (NaN where unknown)."""
+        import numpy as np
+
+        out = np.full(np.shape(xs), np.nan, dtype=np.float32)
+        for index in np.ndindex(out.shape):
+            h = self.height(float(xs[index]), float(ys[index]))
+            if h is not None:
+                out[index] = h
+        return out
+
+    def ground(self, x0: float, y0: float, size: float) -> float | None:
+        """The ground's height in a square (median of the cells known there), None if unknown."""
+        found = sorted(h for i in range(int(size / HEIGHT_CELL)) for j in range(int(size / HEIGHT_CELL))
+                       if (h := self.height(x0 + (i + 0.5) * HEIGHT_CELL, y0 + (j + 0.5) * HEIGHT_CELL)) is not None)
+        return found[len(found) // 2] if found else None
+
+    def save(self, path) -> None:
+        import numpy as np
+
+        cells = list(self.cells.items())
+        np.savez_compressed(path, cells=np.array([c for c, _ in cells], dtype=np.int64).reshape(-1, 2),
+                            values=np.array([v for _, v in cells], dtype=np.float32).reshape(-1, 2))
+
+    def load(self, path) -> None:
+        import numpy as np
+
+        try:
+            data = np.load(path)
+        except (OSError, ValueError):
+            return
+        self.cells = {(int(c[0]), int(c[1])): [float(v[0]), int(v[1])] for c, v in zip(data["cells"], data["values"])}
 
 
 class TerrainMap:
@@ -38,6 +116,7 @@ class TerrainMap:
         self.solid: set[tuple[int, int]] = {tuple(c) for c in data.get("solid", [])}  # known by bumping or falling
         # lowest height where the player stood, per cell: the ground (in the air, it is higher)
         self.levels: dict[tuple[int, int], float] = {tuple(c): z for c, z in data.get("levels", [])}
+        self.heights = HeightMap()  # what the eyes measured (kept in its own file)
         self.dangers: list[tuple[float, float]] = [tuple(d) for d in data.get("dangers", [])]
 
     def to_data(self) -> dict:
@@ -70,14 +149,21 @@ class TerrainMap:
         self.edges[cell] = min(self.edges.get(cell, 0) + votes, SIGHT_CAP)
         return not before and self.is_blocked(cell)
 
-    def edge_ahead(self, x: float, y: float, facing: float, reach: float = GUARD_WALK) -> bool:
-        """Would a step forward go onto an edge the map knows? (The guard against falling.)"""
+    def edge_ahead(self, x: float, y: float, facing: float, reach: float = GUARD_WALK,
+                   z: float | None = None) -> bool:
+        """Would a step forward go onto an edge the map knows, or (given the player's height `z`)
+        down a drop the 3D map shows? (The guard against falling.)"""
         angle = math.radians(facing)
         here = self.cell(x, y)
         for k in range(1, int(reach / 0.75 + 1e-9) + 1):
-            cell = self.cell(x + 0.75 * k * math.cos(angle), y + 0.75 * k * math.sin(angle))
+            px, py = x + 0.75 * k * math.cos(angle), y + 0.75 * k * math.sin(angle)
+            cell = self.cell(px, py)
             if cell != here and self.edges.get(cell, 0) >= BLOCK_SCORE:
                 return True
+            if z is not None and self.heights.cells:
+                ground = self.heights.height(px, py)
+                if ground is not None and z - ground > DROP_LIMIT:
+                    return True
         return False
 
     def mark_blocked(self, x: float, y: float, strength: int = 1, solid: bool = False) -> bool:
@@ -100,10 +186,25 @@ class TerrainMap:
         if z is not None:
             self.levels[cell] = min(self.levels.get(cell, z), z)
 
-    def can_climb(self, a: tuple[int, int], b: tuple[int, int]) -> bool:
-        """Can the player go from cell a to cell b, as far as the heights known tell?"""
-        la, lb = self.levels.get(a), self.levels.get(b)
-        return la is None or lb is None or lb - la <= CLIMB
+    def ground(self, cell: tuple[int, int]) -> float | None:
+        """The ground's height in a cell: where the player stood, else what the eyes measured."""
+        if cell in self.levels:
+            return self.levels[cell]
+        if not self.heights.cells:
+            return None
+        return self.heights.ground(cell[0] * CELL, cell[1] * CELL, CELL)
+
+    def can_climb(self, a: tuple[int, int], b: tuple[int, int], grounds: dict | None = None) -> bool:
+        """Can the player go from cell a to cell b, as far as the heights known tell? Not up a
+        ledge, not down a drop that hurts. `grounds`: a cache of ground heights."""
+        if grounds is None:
+            ga, gb = self.ground(a), self.ground(b)
+        else:
+            for c in (a, b):
+                if c not in grounds:
+                    grounds[c] = self.ground(c)
+            ga, gb = grounds[a], grounds[b]
+        return ga is None or gb is None or -DROP_LIMIT <= gb - ga <= CLIMB
 
     def _ray(self, x: float, y: float, angle: float, start: float, end: float) -> set[tuple[int, int]]:
         """The cells from `start` to `end` metres in that direction."""
@@ -200,11 +301,15 @@ class TerrainMap:
 
         walls = self.walls()
         levels = self.levels
+        heights = bool(self.levels or self.heights.cells)
+        grounds: dict = {}
         by_walls = {(c[0] + dx, c[1] + dy) for c in walls for dx in (-1, 0, 1) for dy in (-1, 0, 1)}
         danger_costs: dict[tuple[int, int], float] = {}
 
         def cost(c: tuple[int, int]) -> float:
             extra = WALL_MARGIN_COST if c in by_walls else 0.0
+            if levels and c not in levels:
+                extra += UNKNOWN_COST
             if self.dangers:
                 if c not in danger_costs:
                     danger_costs[c] = DANGER_COST * self.danger_near(*self.centre(c))
@@ -230,7 +335,7 @@ class TerrainMap:
                         continue
                     if n in walls and n != g:
                         continue
-                    if levels and not self.can_climb(c, n):
+                    if heights and not self.can_climb(c, n, grounds):
                         continue  # a ledge: fine to go down, not up
                     if dx and dy and ((c[0] + dx, c[1]) in walls or (c[0], c[1] + dy) in walls):
                         continue  # don't cut a blocked corner
@@ -264,7 +369,8 @@ def _clear_line(a: tuple[float, float], b: tuple[float, float], terrain: Terrain
     steps = max(1, int(math.hypot(b[0] - a[0], b[1] - a[1]) / (CELL / 2)))
     points = [(a[0] + (b[0] - a[0]) * k / steps, a[1] + (b[1] - a[1]) * k / steps) for k in range(steps + 1)]
     cells = [terrain.cell(*p) for p in points]
-    if terrain.levels and not all(terrain.can_climb(c, n) for c, n in zip(cells, cells[1:]) if c != n):
+    if (terrain.levels or terrain.heights.cells) and not all(
+            terrain.can_climb(c, n) for c, n in zip(cells, cells[1:]) if c != n):
         return False
     return terrain.path_is_clear(points) and all(
         terrain.danger_near(a[0] + (b[0] - a[0]) * k / steps, a[1] + (b[1] - a[1]) * k / steps)

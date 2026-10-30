@@ -98,6 +98,39 @@ def features(blocked, near, drops, remembered, goal_bearing: float, goal_distanc
 FEATURES = len(features([0] * COLUMNS, [0] * COLUMNS, [0] * COLUMNS, [0] * COLUMNS, 0, 0, 100, False, 0))
 
 
+RAY_STEPS = np.arange(0.5, SIGHT + 0.01, 0.5)  # metres along each column where the ground is looked at
+
+
+def scan(ground: np.ndarray, z: float) -> tuple[np.ndarray, np.ndarray]:
+    """From the ground's height along each column's ray (one row per column, at RAY_STEPS) and
+    the player's height `z`: metres to what is in the way, and to where the ground falls away
+    (inf: nothing). The same in the simulation and in the real game (with the 3D map)."""
+    columns = ground.shape[0]
+    ground = np.concatenate([np.full((columns, 2), z, dtype=np.float32), ground], axis=1)
+    change = ground[:, 2:] - ground[:, :-2]  # height change over the last metre
+    in_way = change > STEEP_UP
+    first = np.where(in_way.any(axis=1), in_way.argmax(axis=1), -1)
+    distance = np.where(first >= 0, RAY_STEPS[np.maximum(first, 0)], np.inf)
+    ahead = (RAY_STEPS >= DROP_SEEN[0]) & (RAY_STEPS <= DROP_SEEN[1])
+    before_wall = RAY_STEPS[None, :] < distance[:, None]
+    sudden = (change < STEEP_DOWN) & before_wall  # the ground falls away within a metre: an edge
+    first = sudden.argmax(axis=1)
+    top = ground[np.arange(columns), first]  # the ground just before the edge
+    # Beyond the edge, the void shows, even when the edge itself is hidden under the HUD
+    fallen = (sudden.any(axis=1)[:, None] & (np.arange(len(RAY_STEPS))[None, :] >= first[:, None])
+              & (ground[:, 2:] < top[:, None] + STEEP_DOWN) & ahead[None, :] & before_wall)
+    edge_at = np.where(fallen.any(axis=1), RAY_STEPS[fallen.argmax(axis=1)], np.inf)
+    return distance, edge_at
+
+
+def report(distance: np.ndarray, edge_at: np.ndarray) -> tuple[list, list]:
+    """As the eyes report it: obstacles only up to TRUST and no nearer than NEAREST_SEEN, edges
+    only in DROP_SEEN."""
+    seen = [None if not d <= TRUST else max(float(d), NEAREST_SEEN) for d in distance]
+    drops = [None if np.isinf(d) else min(max(float(d), DROP_SEEN[0]), DROP_SEEN[1]) for d in edge_at]
+    return seen, drops
+
+
 def reachable(h: np.ndarray, start: tuple[int, int]) -> np.ndarray:
     """Cells the character can walk to from `start` without getting hurt."""
     size = h.shape[0]
@@ -205,23 +238,9 @@ class WalkEnv(gym.Env):
         (None: nothing within TRUST) and to where the ground falls away (None: it doesn't)."""
         rng = self.np_random
         angles = np.radians(self.facing + BEARINGS)
-        steps = np.arange(0.5, SIGHT + 0.01, 0.5)
-        xs = np.clip((self.x + np.cos(angles)[:, None] * steps).astype(int), 0, SIZE - 1)
-        ys = np.clip((self.y + np.sin(angles)[:, None] * steps).astype(int), 0, SIZE - 1)
-        ground = np.concatenate([np.full((COLUMNS, 2), self.z, dtype=np.float32), self.h[ys, xs]], axis=1)
-        change = ground[:, 2:] - ground[:, :-2]  # height change over the last metre
-        in_way = change > STEEP_UP
-        first = np.where(in_way.any(axis=1), in_way.argmax(axis=1), -1)
-        distance = np.where(first >= 0, steps[np.maximum(first, 0)], np.inf)
-        ahead = (steps >= DROP_SEEN[0]) & (steps <= DROP_SEEN[1])
-        before_wall = steps[None, :] < distance[:, None]
-        sudden = (change < STEEP_DOWN) & before_wall  # the ground falls away within a metre: an edge
-        first = sudden.argmax(axis=1)
-        top = ground[np.arange(COLUMNS), first]  # the ground just before the edge
-        # Beyond the edge, the void shows, even when the edge itself is hidden under the HUD
-        fallen = (sudden.any(axis=1)[:, None] & (np.arange(len(steps))[None, :] >= first[:, None])
-                  & (ground[:, 2:] < top[:, None] + STEEP_DOWN) & ahead[None, :] & before_wall)
-        edge_at = np.where(fallen.any(axis=1), steps[fallen.argmax(axis=1)], np.inf)
+        xs = np.clip((self.x + np.cos(angles)[:, None] * RAY_STEPS).astype(int), 0, SIZE - 1)
+        ys = np.clip((self.y + np.sin(angles)[:, None] * RAY_STEPS).astype(int), 0, SIZE - 1)
+        distance, edge_at = scan(self.h[ys, xs], self.z)
         if self.noise:  # the real analysis misses things, and sometimes sees what isn't there
             flip = rng.random(COLUMNS) < 0.06
             distance = np.where(flip & np.isinf(distance), rng.uniform(NEAREST_SEEN, TRUST, COLUMNS),
@@ -229,9 +248,7 @@ class WalkEnv(gym.Env):
             distance = distance * rng.uniform(0.8, 1.2, COLUMNS)
             edge_at = np.where(rng.random(COLUMNS) < 0.25, np.inf, edge_at * rng.uniform(0.85, 1.15, COLUMNS))
             edge_at = np.where(rng.random(COLUMNS) < 0.02, rng.uniform(*DROP_SEEN, COLUMNS), edge_at)
-        seen = [None if not d <= TRUST else max(float(d), NEAREST_SEEN) for d in distance]
-        drops = [None if np.isinf(d) else min(max(float(d), DROP_SEEN[0]), DROP_SEEN[1]) for d in edge_at]
-        return seen, drops
+        return report(distance, edge_at)
 
     def observe(self) -> np.ndarray:
         if self.sight is None or not (self.noise and self.np_random.random() < STALE_VIEW):

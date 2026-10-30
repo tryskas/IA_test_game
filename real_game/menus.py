@@ -21,6 +21,7 @@ except ImportError:  # not on Windows: the menus can't be used, but their settin
     inputs = None
 
 MEMORY_FILE = Path(__file__).resolve().parent / "memory.json"
+HEIGHTS_FILE = Path(__file__).resolve().parent / "heights.npz"  # the 3D map of the ground
 REFERENCE_WIDTH, REFERENCE_HEIGHT = 2560, 1440  # screen size the offsets below were measured on
 ZAPPER_OFFSET = (61, 49)  # from the left of « Raccourcis d'équipement » to the first equipment slot
 BUILD_TILES_BELOW = 0.21  # build menu: results are under this height (fraction of the screen)
@@ -102,6 +103,7 @@ class Memory:
         """Forget everything when the HUB is not the one remembered (another save)."""
         if hub_id and self.data.get("hub_id") not in (None, hub_id):
             self.data = {"hub_id": hub_id, "spots": {}}
+            HEIGHTS_FILE.unlink(missing_ok=True)
         elif hub_id:
             self.data["hub_id"] = hub_id
         self.save()

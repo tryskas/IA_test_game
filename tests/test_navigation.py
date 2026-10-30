@@ -105,5 +105,44 @@ class PlanTest(unittest.TestCase):
         self.assertFalse(again.can_climb(bottom, top))
 
 
+
+def fill(terrain, cell, height):
+    """Set the 3D map's height over a whole 2 m cell, as if seen twice."""
+    for i in range(2):
+        for j in range(2):
+            terrain.heights.cells[(2 * cell[0] + i, 2 * cell[1] + j)] = [height, 2]
+
+
+class HeightMapTest(unittest.TestCase):
+    def test_what_is_seen_is_placed_in_the_world(self):
+        import numpy as np
+
+        from navigation import HeightMap
+
+        heights = HeightMap()
+        points = np.array([[5.0, 0.0, -3.0], [5.0, 2.0, 1.0]], dtype=np.float32)  # ahead, right, height
+        for _ in range(2):
+            heights.add_view(10.0, 20.0, 100.0, 90.0, points)  # facing +y: its right is -x
+        self.assertAlmostEqual(heights.height(10.2, 25.3), 97.0, 4)
+        self.assertAlmostEqual(heights.height(8.4, 25.5), 101.0, 4)
+        self.assertIsNone(heights.height(30.0, 30.0))
+
+    def test_paths_avoid_cliffs_seen_both_ways(self):
+        terrain = TerrainMap()
+        fill(terrain, (0, 0), 10.0)
+        fill(terrain, (1, 0), 4.0)  # 6 m lower
+        fill(terrain, (0, 1), 9.0)
+        self.assertFalse(terrain.can_climb((0, 0), (1, 0)))  # a fall that hurts
+        self.assertFalse(terrain.can_climb((1, 0), (0, 0)))  # a wall
+        self.assertTrue(terrain.can_climb((0, 0), (0, 1)))  # a gentle slope
+
+    def test_the_guard_stops_before_a_drop_the_map_shows(self):
+        terrain = TerrainMap()
+        for i in range(1, 4):
+            fill(terrain, (i, 0), 4.0)
+        self.assertTrue(terrain.edge_ahead(1.0, 1.0, 0.0, z=10.0))
+        self.assertFalse(terrain.edge_ahead(1.0, 1.0, 0.0, z=6.0))
+
+
 if __name__ == "__main__":
     unittest.main()

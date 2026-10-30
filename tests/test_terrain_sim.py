@@ -159,6 +159,17 @@ class RealSensesTest(unittest.TestCase):
         self.assertEqual(obs[4 * COLUMNS + 4], 1.0)
         self.assertEqual(obs[-len(ACTIONS) + 4], 1.0)
 
+    def test_the_3d_map_shows_a_cliff_ahead_as_the_simulation_would(self):
+        from navigation import TerrainMap
+        from walk_policy import observe
+
+        terrain = TerrainMap()
+        for x in range(0, 25):
+            for y in range(-15, 16):
+                terrain.heights.cells[(x, y)] = [10.0 if x < 5 else 0.0, 2]  # a 10 m drop 4.5 m ahead
+        obs = observe(None, 5.0, terrain, 0.5, 0.5, 0.0, (30.0, 0.5), 100.0, False, 0, z=10.0)
+        self.assertGreater(obs[2 * COLUMNS + COLUMNS // 2], 0)  # the edge, though nothing is seen right now
+
     def test_blind_without_a_view(self):
         from navigation import TerrainMap
         from walk_policy import observe

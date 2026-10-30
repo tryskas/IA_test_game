@@ -1,3 +1,4 @@
+import math
 import sys
 import unittest
 from pathlib import Path
@@ -94,6 +95,29 @@ class ViewTest(unittest.TestCase):
         threats = threats_from_boxes(boxes, 960, 540, 90)
         self.assertEqual(len(threats), 1)
         self.assertGreater(threats[0].bearing, 10)
+
+
+class DepthPointsTest(unittest.TestCase):
+    def test_depth_gives_heights_in_metres(self):
+        from perception import depth_points
+
+        width, height, pitch = 160, 90, 5.0
+        focal = (width / 2) / math.tan(math.radians(45))
+        down = ((np.arange(height) + 0.5) - height / 2) / focal
+        sin_p, cos_p = math.sin(math.radians(pitch)), math.cos(math.radians(pitch))
+        sinking = sin_p + down * cos_p
+        with np.errstate(divide="ignore"):
+            ground = np.where(sinking > 0, 1.7 / np.maximum(sinking, 1e-9), 1e4)  # flat ground, 1.7 m below the eyes
+        depth = np.repeat(ground[:, None], width, axis=1)
+        wall = 8.0 / (cos_p - down * sin_p)  # a wall 8 m ahead, on the left
+        depth[:, :40] = np.minimum(depth[:, :40], wall[:, None])
+        nearness = 2.0 / depth + 0.3  # as a depth model gives it: scale and offset unknown
+        ahead, right, above = depth_points(nearness, pitch, 90.0, step=2).T
+        flat = (right > 0) & (ahead < 15)
+        self.assertGreater(flat.sum(), 20)
+        self.assertLess(np.abs(above[flat]).max(), 0.3)  # the ground: height 0
+        on_wall = (right < -4) & (np.abs(ahead - 8) < 0.5)
+        self.assertGreater(above[on_wall].max(), 1.0)  # the wall stands up
 
 
 if __name__ == "__main__":

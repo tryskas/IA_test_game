@@ -14,13 +14,14 @@ import math
 import threading
 import time
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
 CREATURE_WORDS = ("creature", "animal", "wild boar", "lizard", "dinosaur", "spider", "monster")
 DETECTOR_WEIGHTS = "yolov8s-worldv2.pt"
 DEPTH_MODEL = "depth-anything/Depth-Anything-V2-Small-hf"
+DEPTH_MODEL_PRECISE = "depth-anything/Depth-Anything-V2-Base-hf"  # finer, about three times slower
 DETECT_CONFIDENCE = 0.18
 DETECT_SIZE = 800  # pixels the detector works at: bigger finds far creatures better, but is slower
 ANALYSIS_WIDTH = 960  # images are shrunk to this width before analysis
@@ -32,6 +33,9 @@ GROUND_PERCENTILE = 20  # the ground is found among the farthest points of each 
 DROP = 0.45  # ground this much farther than expected (share of its nearness): a drop
 BLOCKED = 0.35  # sticking out of the ground by this share of the ground's depth range: in the way
 # Parts of the screen where the player's own hand, tool and HUD are: never creatures.
+POINT_STEP = 6  # one depth pixel in this many, each way, is placed in the 3D map
+POINT_FAR = 20.0  # metres: farther, the depth is too rough to place things
+GROUND_FIT_ROWS = 8  # rows of ground needed to set the depth's scale
 NOT_THE_WORLD = ((0.55, 0.55, 1.0, 1.0), (0.0, 0.85, 1.0, 1.0))
 
 
@@ -55,6 +59,61 @@ class DepthReading:
     drop_rows: tuple[float | None, ...] = ()  # per column: the nearest row where it has fallen away
 
 
+def nearness(depth: np.ndarray) -> np.ndarray:
+    """The depth picture as « bigger is nearer », whichever way the model gives it, with the
+    player's hand and the HUD left out (NaN). A copy."""
+    height = depth.shape[0]
+    width = depth.shape[1]
+    fractions = (np.arange(height) + 0.5) / height
+    ground = (fractions >= GROUND_BAND[0]) & (fractions <= GROUND_BAND[1])
+    sky = (fractions >= SKY_BAND[0]) & (fractions <= SKY_BAND[1])
+    if np.median(depth[ground]) < np.median(depth[sky]):
+        depth = 1.0 / np.clip(depth, 1e-6, None)  # a distance: its inverse is the nearness
+    depth = depth.astype(np.float64)
+    for x0, y0, x1, y1 in NOT_THE_WORLD:
+        depth[int(y0 * height):int(y1 * height), int(x0 * width):int(x1 * width)] = np.nan
+    return depth
+
+
+def depth_points(depth: np.ndarray, pitch: float, fov: float, eye_height: float = 1.7,
+                 step: int = POINT_STEP, far: float = POINT_FAR) -> np.ndarray | None:
+    """3D points seen, in metres: (ahead, to the right, height above the ground under the player),
+    from a depth picture taken looking `pitch` degrees down.
+
+    The depth model gives nearness up to an unknown scale and offset (it is « affine in 1 /
+    distance »). Both come from the ground just ahead, whose distance is known: it lies
+    `eye_height` below the eyes. None if that ground can't be made out."""
+    near = nearness(depth)
+    height, width = near.shape
+    focal = (width / 2) / math.tan(math.radians(fov) / 2)
+    down = ((np.arange(height) + 0.5) - height / 2) / focal  # per row: how far below the centre
+    across = ((np.arange(width) + 0.5) - width / 2) / focal  # per column: how far to the right
+    sin_p, cos_p = math.sin(math.radians(pitch)), math.cos(math.radians(pitch))
+    sinking = sin_p + down * cos_p  # how steeply each row's rays go down
+    fractions = (np.arange(height) + 0.5) / height
+    band = (fractions >= GROUND_BAND[0]) & (fractions <= GROUND_BAND[1]) & (sinking > 0.05)
+    with np.errstate(all="ignore"), warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        ground = np.nanpercentile(near[band], GROUND_PERCENTILE, axis=1)  # the farthest surface: the ground
+    inverse = sinking[band] / eye_height  # 1 / depth of the ground, row by row
+    known = np.isfinite(ground)
+    if known.sum() < GROUND_FIT_ROWS:
+        return None
+    scale, offset = np.polyfit(inverse[known], ground[known], 1)
+    if scale <= 0:
+        return None
+    rows, cols = np.arange(0, height, step), np.arange(0, width, step)
+    with np.errstate(all="ignore"):
+        inv = (near[np.ix_(rows, cols)] - offset) / scale
+        distance = 1.0 / inv  # along the view's axis
+        d, a = down[rows][:, None], across[cols][None, :]
+        ahead = distance * (cos_p - d * sin_p)
+        right = distance * a
+        above = eye_height - distance * (sin_p + d * cos_p)
+        keep = np.isfinite(distance) & (inv > 0) & (ahead > 0.5) & (ahead < far) & (np.abs(above) < 30)
+    return np.stack([ahead[keep], right[keep], above[keep]], axis=1).astype(np.float32)
+
+
 def read_depth(depth: np.ndarray, columns: int = COLUMNS) -> DepthReading:
     """What a depth picture says about the way ahead.
 
@@ -70,11 +129,7 @@ def read_depth(depth: np.ndarray, columns: int = COLUMNS) -> DepthReading:
     def rows(band):
         return (fractions >= band[0]) & (fractions <= band[1])
 
-    if np.median(depth[rows(GROUND_BAND)]) < np.median(depth[rows(SKY_BAND)]):
-        depth = 1.0 / np.clip(depth, 1e-6, None)  # a distance: its inverse is the nearness
-    depth = depth.astype(np.float64)  # a copy: the player's hand and the HUD are left out below
-    for x0, y0, x1, y1 in NOT_THE_WORLD:
-        depth[int(y0 * height):int(y1 * height), int(x0 * width):int(x1 * width)] = np.nan
+    depth = nearness(depth)
     # On one row, the ground is the farthest surface: whatever hides it is nearer.
     ground = rows(GROUND_BAND)
     slope, offset = np.polyfit(fractions[ground], np.nanpercentile(depth[ground], GROUND_PERCENTILE, axis=1), 1)
@@ -159,6 +214,9 @@ class View:
     drops: tuple[bool, ...] = ()  # columns where the ground falls away
     aspect: float = 9 / 16  # height / width of the image analysed
     drop_rows: tuple[float | None, ...] = ()  # where each column's ground has fallen away, nearest
+    pose: tuple[float, float, float, float] | None = None  # player's x, y, z, yaw when the picture was taken
+    pitch: float | None = None  # degrees the view looked down then
+    points: np.ndarray | None = field(default=None, compare=False, repr=False)  # depth_points of the picture
 
     def column_bearing(self, index: int) -> float:
         width = len(self.clearance)
@@ -204,6 +262,9 @@ class Eyes:
         self.latest_image: np.ndarray | None = None
         self.last_depth: np.ndarray | None = None
         self.confidence = DETECT_CONFIDENCE  # lowered during a fight: a doubtful shape nearby is worth a look
+        self.pitch: float | None = None  # degrees the view looks down, told by the Mover
+        self.where = None  # () -> (x, y, z, yaw) of the player: to place what is seen on the 3D map
+        self.depth_model = DEPTH_MODEL
         self._want = (creatures, depth)
         self._detector = self._depth = None
         self._running = False
@@ -219,7 +280,7 @@ class Eyes:
         if depth:
             from transformers import pipeline  # downloads the model the first time
 
-            self._depth = pipeline("depth-estimation", model=DEPTH_MODEL, device=-1)
+            self._depth = pipeline("depth-estimation", model=self.depth_model, device=-1)
         self._running = True
         self._thread = threading.Thread(target=self._watch, daemon=True)
         self._thread.start()
@@ -228,8 +289,8 @@ class Eyes:
     def stop(self) -> None:
         self._running = False
 
-    def look(self, image: np.ndarray, taken_at: float) -> View:
-        """Analyse one picture of the game (BGR)."""
+    def look(self, image: np.ndarray, taken_at: float, pose=None, pitch: float | None = None) -> View:
+        """Analyse one picture of the game (BGR), taken from `pose` looking `pitch` degrees down."""
         import cv2
 
         scale = ANALYSIS_WIDTH / image.shape[1]
@@ -245,14 +306,17 @@ class Eyes:
             ]
             threats = threats_from_boxes(boxes, width, height, self.fov)
         reading = DepthReading((), (), ())
+        points = None
         if self._depth is not None:
             from PIL import Image
 
             depth = self._depth(Image.fromarray(small[:, :, ::-1]))["predicted_depth"]
             self.last_depth = np.asarray(depth.squeeze().cpu().numpy(), dtype=np.float32)
             reading = read_depth(self.last_depth)
+            if pose is not None and pitch is not None:
+                points = depth_points(self.last_depth, pitch, self.fov)
         return View(taken_at, threats, reading.clearance, self.fov, reading.obstacle_rows, reading.drops,
-                    height / width, reading.drop_rows)
+                    height / width, reading.drop_rows, pose, pitch, points)
 
     def _watch(self) -> None:
         import mss
@@ -262,8 +326,13 @@ class Eyes:
             while self._running:
                 taken_at = time.perf_counter()
                 image = np.asarray(screen.grab({"left": left, "top": top, "width": width, "height": height}))[:, :, :3]
+                pitch = self.pitch
                 try:
-                    self.latest = self.look(image, taken_at)
+                    pose = self.where() if self.where is not None else None
+                except Exception:  # the mod didn't answer: the picture is still good for the rest
+                    pose = None
+                try:
+                    self.latest = self.look(image, taken_at, pose, pitch)
                     self.latest_image = image
                 except Exception as error:  # a bad frame must not blind the AI for good
                     self.log(f"  vision : {error}")

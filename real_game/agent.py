@@ -33,7 +33,7 @@ from config import FOV
 from defense import defend, respawn
 from game_io import Died, RealGame, Stopped, UnderAttack
 from game_state import ROOT, fetch, read_player
-from menus import Memory, Menus, no_sightings
+from menus import HEIGHTS_FILE, Memory, Menus, no_sightings
 from moves import Calibration, Mover, SkillError, calibrate
 from planner import RAW, Plan, Step, next_step, parse_schematics
 from screen import Screen
@@ -43,6 +43,7 @@ warnings.filterwarnings("ignore", message=".*pin_memory.*")
 warnings.filterwarnings("ignore", message=".*quantize_per_tensor.*")
 warnings.filterwarnings("ignore", category=FutureWarning)
 
+CAPTURES = ROOT / "captures"  # pictures for the player to look at
 BUILD_TRIES = 3  # no room for a building: go somewhere else this many times
 LOW_HP = 50  # below this, say so after a fight
 START_TRIES = 6  # the start of the game, interrupted by danger: tried again this many times
@@ -175,6 +176,38 @@ ATTACKS_BEFORE_GIVING_UP = 2  # attacks on the way to the same node before choos
 def save_map(mover: Mover, memory: Memory) -> None:
     memory.data["terrain"] = mover.terrain.to_data()
     memory.save()
+    if len(mover.terrain.heights):
+        mover.terrain.heights.save(HEIGHTS_FILE)
+        draw_heights(mover.terrain, read_player())
+
+
+def draw_heights(terrain, player, half: int = 100) -> None:
+    """captures/carte_3d.png: the 3D map around the player, seen from above. Low ground dark blue,
+    high ground red, unknown black; the player is the white dot, blocked cells are purple."""
+    import cv2
+    import numpy as np
+
+    from navigation import CELL, HEIGHT_CELL
+
+    cx, cy = int(player.x // HEIGHT_CELL), int(player.y // HEIGHT_CELL)
+    grid = np.full((2 * half, 2 * half), np.nan, dtype=np.float32)
+    for (ix, iy), (height, seen) in terrain.heights.cells.items():
+        if seen >= 2 and abs(ix - cx) < half and abs(iy - cy) < half:
+            grid[iy - cy + half, ix - cx + half] = height - player.z
+    if np.isfinite(grid).sum() < 10:
+        return
+    low, high = np.nanpercentile(grid, 2), np.nanpercentile(grid, 98)
+    scaled = np.clip((grid - low) / max(high - low, 1.0) * 255, 0, 255)
+    image = cv2.applyColorMap(np.nan_to_num(scaled).astype(np.uint8), cv2.COLORMAP_TURBO)
+    image[~np.isfinite(grid)] = 0
+    for cell in terrain.walls():
+        x0, y0 = cell[0] * CELL / HEIGHT_CELL - cx + half, cell[1] * CELL / HEIGHT_CELL - cy + half
+        if 0 <= x0 < 2 * half and 0 <= y0 < 2 * half:
+            image[int(y0):int(y0 + CELL / HEIGHT_CELL), int(x0):int(x0 + CELL / HEIGHT_CELL)] = (200, 60, 190)
+    image = cv2.resize(image, (800, 800), interpolation=cv2.INTER_NEAREST)
+    cv2.circle(image, (400, 400), 6, (255, 255, 255), -1)
+    CAPTURES.mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(str(CAPTURES / "carte_3d.png"), image)
 
 
 def home() -> tuple[float, float] | None:
@@ -258,6 +291,8 @@ def main() -> None:
     parser.add_argument("--sans-vision", action="store_true", help="ne pas analyser l'image (créatures, obstacles)")
     parser.add_argument("--marche-classique", action="store_true",
                         help="ne pas utiliser la marche apprise (models/marche.zip)")
+    parser.add_argument("--vision-precise", action="store_true",
+                        help="modèle de profondeur plus gros : terrain mieux mesuré, mais plus lent")
     parser.add_argument("commande", choices=["calibrer", "jouer", "equiper", "construire", "aller", "miner", "voir",
                                              "fabriquer", "jalon", "deposer"])
     parser.add_argument("quoi", nargs="?", help="ressource, bâtiment ou recette")
@@ -286,7 +321,18 @@ def main() -> None:
         from perception import Eyes
 
         print("Chargement de la vision (la première fois, téléchargement des modèles)...")
-        eyes = Eyes((window.left, window.top, window.width, window.height), FOV).start()
+        from perception import DEPTH_MODEL_PRECISE
+
+        eyes = Eyes((window.left, window.top, window.width, window.height), FOV)
+        if args.vision_precise:
+            eyes.depth_model = DEPTH_MODEL_PRECISE
+
+        def where() -> tuple[float, float, float, float]:  # to place what is seen on the 3D map
+            player = read_player()
+            return player.x, player.y, player.z, player.yaw
+
+        eyes.where = where
+        eyes.start()
         game.eyes = eyes
     if args.commande == "voir":
         watch(eyes)
@@ -302,6 +348,9 @@ def main() -> None:
         from navigation import TerrainMap
 
         terrain = TerrainMap(memory.data.get("terrain"))
+        if HEIGHTS_FILE.exists():
+            terrain.heights.load(HEIGHTS_FILE)
+            print(f"Carte 3D du terrain : {len(terrain.heights)} cases connues")
         for spot in memory.data.pop("dangers", []):  # older memories kept dangers apart
             terrain.mark_danger(*spot)
         mover = Mover(game, Calibration.load(), terrain=terrain, eyes=eyes)
