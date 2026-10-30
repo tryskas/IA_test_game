@@ -2,19 +2,11 @@ __pycache__/
 *.pyc
 .venv/
 venv/
-# Training checkpoints other than the shipped model
-models/*
-!models/ia_tier0.zip
 
-# Screenshots and game data from the real game
-captures/
+# Trained models
+models/
 
-# Measured by real_game/agent.py calibrer, specific to each PC
-real_game/calibration.json
-real_game/memory.json
-real_game/heights.npz
-
-# Vision models' weights, downloaded on each PC (too big for GitHub)
+# Big model weights, downloaded on each PC (too big for GitHub)
 weights/
 *.pt
 

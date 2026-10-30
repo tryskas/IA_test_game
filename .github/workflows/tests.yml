@@ -15,8 +15,6 @@ jobs:
           python-version: "3.11"
           cache: pip
       # Everything but PyTorch, which only training needs.
-      - run: pip install gymnasium numpy pygame-ce opencv-python-headless
+      - run: pip install gymnasium numpy
       - name: Unit tests
-        env:
-          SDL_VIDEODRIVER: dummy
         run: python -m unittest discover -s tests -t . -v

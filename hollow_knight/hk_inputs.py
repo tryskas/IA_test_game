@@ -1,8 +1,8 @@
 """Keyboard and mouse for the game, through the Windows SendInput function.
 
 Keys are sent as scan codes (the physical key), which DirectX games read.
-A key is named by the letter the game shows in its controls ("z" for forward
-on an AZERTY keyboard): the current keyboard layout tells which physical key
+A key is named by the letter the game shows in its controls ("z" to jump in
+Hollow Knight by default): the current keyboard layout tells which physical key
 types that letter, so the same names work on AZERTY and QWERTY.
 """
 from __future__ import annotations
