@@ -17,3 +17,7 @@ real_game/heights.npz
 # Vision models' weights, downloaded on each PC (too big for GitHub)
 weights/
 *.pt
+
+# Hollow Knight mod: compiled files
+hollow_knight/mod/*/bin/
+hollow_knight/mod/*/obj/

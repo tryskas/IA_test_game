@@ -1,5 +1,7 @@
 # IA_test_game : une IA qui apprend à speedrunner le début de Satisfactory
 
+> **Le projet continue avec Hollow Knight** : une IA qui apprend à battre un boss du Panthéon des dieux, par apprentissage par renforcement. Tout est dans le dossier [`hollow_knight/`](hollow_knight/), à commencer par [son guide](hollow_knight/GUIDE.md). La partie Satisfactory ci-dessous est arrêtée, mais reste disponible.
+
 Le vrai jeu est trop lent et trop complexe pour qu'une IA y apprenne par essais-erreurs. Ce projet fournit donc un **mini-Satisfactory** : une simulation simplifiée du Tier 0, de la première action jusqu'au HUB Upgrade 6. Il ne contient ni 3D ni déplacements, seulement l'économie du jeu : ressources, recettes, machines et énergie.
 
 Une partie y dure une fraction de seconde au lieu d'une heure. Une IA peut donc jouer des milliers de parties et apprendre à finir le Tier 0 le plus vite possible. Une fenêtre Python permet ensuite de la **regarder jouer**, en course contre des bots écrits à la main.

@@ -1,0 +1,56 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Compiler le mod : dotnet build -c Release
+    Si le jeu n'est pas dans le dossier Steam par defaut, donner son dossier « Managed » :
+      dotnet build -c Release -p:HollowKnightManaged="D:\SteamLibrary\steamapps\common\Hollow Knight\hollow_knight_Data\Managed"
+    Le mod compile est copie dans Managed\Mods\HKAIBridge.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net472</TargetFramework>
+    <AssemblyName>HKAIBridge</AssemblyName>
+    <RootNamespace>HKAIBridge</RootNamespace>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+    <HollowKnightManaged Condition="'$(HollowKnightManaged)' == ''">C:\Program Files (x86)\Steam\steamapps\common\Hollow Knight\hollow_knight_Data\Managed</HollowKnightManaged>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- .NET Framework 4.7.2 reference assemblies, so that the .NET SDK can compile without Visual Studio -->
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="Assembly-CSharp">
+      <HintPath>$(HollowKnightManaged)\Assembly-CSharp.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine">
+      <HintPath>$(HollowKnightManaged)\UnityEngine.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>$(HollowKnightManaged)\UnityEngine.CoreModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.Physics2DModule">
+      <HintPath>$(HollowKnightManaged)\UnityEngine.Physics2DModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <Target Name="CheckGameFolder" BeforeTargets="ResolveAssemblyReferences">
+    <Error Condition="!Exists('$(HollowKnightManaged)\Assembly-CSharp.dll')"
+           Text="Je ne trouve pas Hollow Knight dans $(HollowKnightManaged). Donne son dossier Managed : dotnet build -c Release -p:HollowKnightManaged=&quot;...\hollow_knight_Data\Managed&quot;" />
+  </Target>
+
+  <Target Name="CopyToMods" AfterTargets="Build">
+    <MakeDir Directories="$(HollowKnightManaged)\Mods\HKAIBridge" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(HollowKnightManaged)\Mods\HKAIBridge" />
+    <Message Importance="high" Text="Mod copie dans $(HollowKnightManaged)\Mods\HKAIBridge" />
+  </Target>
+
+</Project>
