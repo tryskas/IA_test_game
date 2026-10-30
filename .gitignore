@@ -13,3 +13,7 @@ captures/
 real_game/calibration.json
 real_game/memory.json
 real_game/heights.npz
+
+# Vision models' weights, downloaded on each PC (too big for GitHub)
+weights/
+*.pt
