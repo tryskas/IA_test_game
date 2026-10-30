@@ -33,7 +33,7 @@ from config import FOV
 from defense import defend, recover, respawn
 from game_io import Died, RealGame, Stopped, UnderAttack
 from game_state import ROOT, fetch, read_player
-from menus import Memory, Menus
+from menus import Memory, Menus, no_sightings
 from moves import Calibration, Mover, SkillError, calibrate
 from planner import RAW, Plan, Step, next_step, parse_schematics
 from screen import Screen
@@ -44,6 +44,7 @@ warnings.filterwarnings("ignore", message=".*quantize_per_tensor.*")
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 BUILD_TRIES = 3  # no room for a building: go somewhere else this many times
+START_TRIES = 6  # the start of the game, interrupted by danger: tried again this many times
 RELOCATE_M = 25.0  # metres walked to look for room elsewhere
 
 RESOURCES = {"fer": "iron_ore", "cuivre": "copper_ore", "calcaire": "limestone"}
@@ -137,8 +138,9 @@ def describe(step: Step, plan: Plan) -> str:
 def choose_milestone_at_terminal(menus: Menus, step: Step) -> None:
     menus.open_terminal(terminal())
     try:
-        menus.select_milestone(step.milestone.name, step.milestone.tier,
-                               lambda: active_milestone() == step.milestone.cls)
+        with no_sightings(menus.raw):  # icons in the menu can look like creatures to the eyes
+            menus.select_milestone(step.milestone.name, step.milestone.tier,
+                                   lambda: active_milestone() == step.milestone.cls)
     finally:
         menus.close()
 
@@ -146,7 +148,8 @@ def choose_milestone_at_terminal(menus: Menus, step: Step) -> None:
 def deposit_at_terminal(menus: Menus, milestone_cls: str) -> int:
     menus.open_terminal(terminal())
     try:
-        return menus.deposit(lambda: read_plan().milestones[milestone_cls].purchased)
+        with no_sightings(menus.raw):
+            return menus.deposit(lambda: read_plan().milestones[milestone_cls].purchased)
     finally:
         menus.close()
 
@@ -203,10 +206,27 @@ def survive(alarm: Exception, game: RealGame, mover: Mover, menus: Menus, memory
     recover(game, mover, home())
 
 
+def react(alarm: Exception, game: RealGame, mover: Mover, menus: Menus, memory: Memory, attacks: dict) -> None:
+    """Deal with an attack or a death; a new alarm during the reaction is dealt with the same way."""
+    for _ in range(3):
+        try:
+            survive(alarm, game, mover, menus, memory, attacks)
+            return
+        except (UnderAttack, Died) as again:
+            alarm = again
+
+
 def play(game: RealGame, mover: Mover, menus: Menus, memory: Memory) -> None:
-    start_of_game(menus, memory)
-    failures = 0
     attacks: dict = {}
+    for _ in range(START_TRIES):  # the start of the game can be interrupted by a creature too
+        try:
+            start_of_game(menus, memory)
+            break
+        except (UnderAttack, Died) as alarm:
+            react(alarm, game, mover, menus, memory, attacks)
+    else:
+        raise SkillError("le début de partie a été interrompu trop souvent")
+    failures = 0
     while True:
         plan = read_plan()
         hub = terminal() or {}
@@ -221,12 +241,7 @@ def play(game: RealGame, mover: Mover, menus: Menus, memory: Memory) -> None:
             do(step, game, mover, menus)
             failures = 0
         except (UnderAttack, Died) as alarm:
-            for _ in range(3):  # a new alarm during the reaction is dealt with the same way
-                try:
-                    survive(alarm, game, mover, menus, memory, attacks)
-                    break
-                except (UnderAttack, Died) as again:
-                    alarm = again
+            react(alarm, game, mover, menus, memory, attacks)
         except SkillError as problem:
             failures += 1
             print(f"  échec : {problem}")

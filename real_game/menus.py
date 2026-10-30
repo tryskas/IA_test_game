@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import math
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable
 
@@ -39,6 +40,33 @@ RELEVANT_SLOT = (31, 68, 104)  # offset x, y, then gap between items
 SUBMIT_WORDS = ("Envoyer", "Expédier", "Soumettre", "Valider", "Livrer")
 TERMINAL_DISTANCE = 2.5
 TERMINAL_SIDES = (0, 45, -45, 90, -90, 180)  # around the terminal, from its front
+
+
+@contextmanager
+def no_alarms(raw):
+    """No alarm at all meanwhile (closing a menu): the danger is dealt with right after."""
+    before = getattr(raw, "alarms", None)
+    if before is not None:
+        raw.alarms = False
+    try:
+        yield
+    finally:
+        if before is not None:
+            raw.alarms = before
+
+
+@contextmanager
+def no_sightings(raw):
+    """Meanwhile, creatures seen on screen don't stop the AI (a menu or a hologram is in the
+    way of the eyes); losing health still does."""
+    before = getattr(raw, "ignore_sightings_until", None)
+    if before is not None:
+        raw.ignore_sightings_until = float("inf")
+    try:
+        yield
+    finally:
+        if before is not None:
+            raw.ignore_sightings_until = before
 
 
 def building_position(spot: dict) -> tuple[float, float]:
@@ -151,9 +179,10 @@ class Menus:
             raise SkillError(f"« {name} » n'est pas dans le menu de construction")
         self.click_at(tile.x, tile.y)
         try:
-            pitch = self._place(done)
+            with no_sightings(self.raw):  # the hologram can look like a creature to the eyes
+                pitch = self._place(done)
         finally:
-            self.press(KEYS["close"])  # leave build mode
+            self.close()  # leave build mode
         if spot:
             player = self.raw.player()
             placed_at = {"x": player.x, "y": player.y, "facing": self.mover.facing(player), "pitch": pitch}
@@ -298,7 +327,8 @@ class Menus:
         return given
 
     def close(self) -> None:
-        self.press(KEYS["close"])
+        with no_alarms(self.raw):  # an alarm must not stop the menu from closing
+            self.press(KEYS["close"])
 
     # Workbench -----------------------------------------------------------------------------
 
@@ -306,6 +336,10 @@ class Menus:
         """Make `count` of `product` (class name) with `recipe` (its in-game name) at the workbench.
 
         Returns how many were made."""
+        with no_sightings(self.raw):  # icons in the menu can look like creatures to the eyes
+            return self._craft(recipe, product, count)
+
+    def _craft(self, recipe: str, product: str, count: int) -> int:
         start = self.amount(product)
         self.open_workbench()
         try:
@@ -327,7 +361,7 @@ class Menus:
                 made = self._hold_to_craft(product, start, count, None)
             return made
         finally:
-            self.press(KEYS["close"])
+            self.close()
 
     def _hold_to_craft(self, product: str, start: float, count: int, key: str | None) -> int:
         """Hold the craft key (or the mouse button) until enough is made or nothing happens."""
