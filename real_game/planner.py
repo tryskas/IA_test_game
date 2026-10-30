@@ -16,8 +16,8 @@ from dataclasses import dataclass, field
 RAW = {"Desc_OreIron_C": "iron_ore", "Desc_OreCopper_C": "copper_ore", "Desc_Stone_C": "limestone"}
 WORKBENCH = "BP_WorkBenchComponent_C"
 MILESTONE_TYPES = ("Tutorial", "Milestone")
-MINE_MAX = 100  # ore mined per trip to a node (one inventory stack)
-CRAFT_BATCH = 50  # crafts per visit to the workbench
+MINE_MAX = 300  # ore mined per trip to a node (three inventory stacks)
+CRAFT_BATCH = 500  # crafts per visit to the workbench: everything needed at once
 
 
 @dataclass(frozen=True)
@@ -104,6 +104,60 @@ def raw_cost(plan: Plan, item: str, amount: float, depth: int = 0) -> float:
     return sum(raw_cost(plan, i, q * crafts, depth + 1) for i, q in recipe.inputs.items())
 
 
+BASE_PAIR_MAX = 150.0  # metres between the iron and the copper node of a base, at most
+BASE_SEARCH = 800.0  # metres from the player where a base is looked for
+PURITY_BONUS = {"pure": -15.0, "normal": 0.0, "impure": 15.0}  # metres a node's purity is worth
+
+
+def choose_base(nodes, x: float, y: float) -> tuple[float, float, float, float] | None:
+    """Where to build the HUB: between an iron and a copper node close to each other, at about the
+    same height, near limestone and not too far from (x, y). Returns (x, y, metres between the two
+    nodes, metres from here), or None if no such pair."""
+    free = [n for n in nodes if not n.exploited]
+    stones = [n for n in free if n.resource == "limestone"]
+    best = None
+    for iron in (n for n in free if n.resource == "iron_ore"):
+        for copper in (n for n in free if n.resource == "copper_ore"):
+            apart = math.hypot(iron.x - copper.x, iron.y - copper.y)
+            mx, my = (iron.x + copper.x) / 2, (iron.y + copper.y) / 2
+            trip = math.hypot(mx - x, my - y)
+            if apart > BASE_PAIR_MAX or trip > BASE_SEARCH:
+                continue
+            stone = min((math.hypot(s.x - mx, s.y - my) for s in stones), default=BASE_PAIR_MAX)
+            score = (apart + 2 * abs(iron.z - copper.z) + 0.5 * min(stone, BASE_PAIR_MAX) + 0.2 * trip
+                     + PURITY_BONUS.get(iron.purity, 0) + PURITY_BONUS.get(copper.purity, 0))
+            if best is None or score < best[0]:
+                best = (score, mx, my, apart, trip)
+    return None if best is None else best[1:]
+
+
+def raw_needs(plan: Plan, wanted: dict[str, float], inventory: dict[str, float]) -> dict[str, float] | None:
+    """Ore still to mine to make everything `wanted`, using first what is carried (the items
+    themselves, then their parts, down to the ore). None if something can't be made by hand."""
+    stock = dict(inventory)
+    needs: dict[str, float] = {}
+
+    def need(item: str, amount: float, depth: int) -> bool:
+        use = min(stock.get(item, 0), amount)
+        stock[item] = stock.get(item, 0) - use
+        amount -= use
+        if amount <= 1e-9:
+            return True
+        if item in RAW:
+            needs[item] = needs.get(item, 0) + amount
+            return True
+        recipe = plan.recipes.get(item)
+        if recipe is None or depth > 10:
+            return False
+        crafts = math.ceil(amount / recipe.outputs[item] - 1e-9)
+        return all(need(part, per_craft * crafts, depth + 1) for part, per_craft in recipe.inputs.items())
+
+    for item, amount in wanted.items():
+        if not need(item, amount, 0):
+            return None
+    return needs
+
+
 def choose_milestone(plan: Plan) -> Milestone | None:
     """The next milestone to work on: lowest tier first, then the cheapest in ore."""
     candidates = [
@@ -146,6 +200,12 @@ def next_step(plan: Plan, inventory: dict[str, float], active: str | None, ship_
         return Step("wait", milestone=target, why="jalon complet, en attente de validation")
     if all(inventory.get(item, 0) >= qty for item, qty in remaining.items()):
         return Step("deposit", milestone=target)
+    # Mine all the ore the milestone still needs first (one trip per ore), then craft it all.
+    needs = {ore: qty for ore, qty in (raw_needs(plan, remaining, inventory) or {}).items() if qty > 1e-6}
+    if needs:
+        ore = max(needs, key=needs.get)
+        return Step("mine", target, item=ore, count=min(max(math.ceil(needs[ore]), 10), MINE_MAX),
+                    why=f"il faut encore {math.ceil(needs[ore])} {plan.name(ore)} en tout")
     # Make the dearest missing item first: it takes longest, the rest comes on the way.
     missing = {item: qty - inventory.get(item, 0) for item, qty in remaining.items() if inventory.get(item, 0) < qty}
     item = max(missing, key=lambda i: raw_cost(plan, i, missing[i]))

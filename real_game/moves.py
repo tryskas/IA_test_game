@@ -38,6 +38,7 @@ DETOUR_NEAR, DETOUR_FAR = 12.0, 30.0  # metres to the detour's waypoint
 ESCAPE_TURN = 70.0  # degrees turned to go round what keeps blocking the way
 GUARD_ESCAPE = 4.0  # metres ahead checked before stepping off while getting out
 LEARNT_STUCK_S, LEARNT_STUCK_MOVE = 0.6, 0.5  # learnt walk: moved less than this (m) in this time (s), as terrain_sim.STUCK_STEPS
+MINE_S_PER_ORE = 2.0  # seconds allowed per ore mined by hand
 MINE_RADIUS = 2.5  # metres from the node's centre where we stop to mine
 EYE_HEIGHT = 1.7  # metres
 AIM_PITCHES = (15, 25, 35, 45, 55, 65)  # degrees below the horizon tried to find the node
@@ -485,8 +486,9 @@ class Mover:
             raise SkillError("je n'arrive pas à atteindre le gisement : j'en choisirai un autre")
         return node
 
-    def mine_by_hand(self, resource: str, amount: int, timeout: float = 240) -> int:
+    def mine_by_hand(self, resource: str, amount: int, timeout: float | None = None) -> int:
         """Walk to the nearest free node of `resource` and mine `amount` of it. Returns how many."""
+        timeout = timeout or 60 + MINE_S_PER_ORE * amount
         start_amount = self._amount(resource)
         node = self.go_to_node(resource)
         self.face(node.x, node.y)

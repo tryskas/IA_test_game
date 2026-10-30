@@ -249,7 +249,7 @@ python real_game/agent.py jalon
 python real_game/agent.py deposer
 ```
 
-6. **Jouer** : l'IA fait le début de partie si besoin (équiper, HUB, établi), puis remplit les jalons l'un après l'autre. Elle choisit le jalon le moins coûteux, mine et fabrique à l'établi ce qui manque en remontant la chaîne (béton à partir du calcaire, fil à partir du cuivre...), puis va tout déposer au terminal. Son plan est calculé à partir des données du jeu : coûts restants, recettes débloquées. Pour l'instant, tout est fait à la main : les machines viendront ensuite.
+6. **Jouer** : l'IA fait le début de partie si besoin (équiper, HUB, établi), puis remplit les jalons l'un après l'autre. Avant de poser le HUB, elle va s'installer entre un gisement de fer et un de cuivre proches l'un de l'autre (moins de 150 m, à peu près à la même hauteur, près du calcaire si possible) : chaque aller-retour pour miner est court. Elle choisit le jalon le moins coûteux et calcule tout ce qu'il demande, jusqu'au minerai, en tenant compte de ce qu'elle porte déjà. Elle mine tout d'un coup (300 au plus par voyage ; pour « Étude sur le terrain », 150 cuivre pour 300 fils), fabrique tout en une visite à l'établi (béton à partir du calcaire, fil à partir du cuivre...), puis va tout déposer au terminal. Son plan est calculé à partir des données du jeu : coûts restants, recettes débloquées. Pour l'instant, tout est fait à la main : les machines viendront ensuite.
 
 ```bash
 python real_game/agent.py jouer

@@ -35,7 +35,7 @@ from game_io import Died, RealGame, Stopped, UnderAttack
 from game_state import ROOT, fetch, read_player
 from menus import HEIGHTS_FILE, Memory, Menus, no_sightings
 from moves import Calibration, Mover, SkillError, calibrate
-from planner import RAW, Plan, Step, next_step, parse_schematics
+from planner import RAW, Plan, Step, choose_base, next_step, parse_schematics
 from screen import Screen
 
 # Messages from the libraries the vision uses, harmless here, that would bury the AI's own
@@ -44,6 +44,7 @@ warnings.filterwarnings("ignore", message=".*quantize_per_tensor.*")
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 CAPTURES = ROOT / "captures"  # pictures for the player to look at
+BASE_NEAR = 8.0  # metres from the chosen base site that are close enough
 BUILD_TRIES = 3  # no room for a building: go somewhere else this many times
 LOW_HP = 50  # below this, say so after a fight
 START_TRIES = 6  # the start of the game, interrupted by danger: tried again this many times
@@ -119,10 +120,26 @@ def start_of_game(menus: Menus, memory: Memory) -> None:
     if menus.equip_xeno_zapper():
         print(f"[{stamp()}] Repousse-xénos équipé")
     if hub_id() is None:
+        go_to_base(menus.mover)
         build(menus, "hub")
     memory.check_save(hub_id())
     if "workbench" not in memory.spots:
         build(menus, "etabli")
+
+
+def go_to_base(mover: Mover) -> None:
+    """Before building the HUB: go where iron and copper are close to each other (and to
+    limestone), so that every trip to mine is short."""
+    player = read_player()
+    site = choose_base(mover.raw.nodes(), player.x, player.y)
+    if site is None:
+        print(f"[{stamp()}] Pas de fer et de cuivre proches l'un de l'autre : je m'installe ici")
+        return
+    x, y, apart, trip = site
+    print(f"[{stamp()}] Je m'installe entre un gisement de fer et un de cuivre "
+          f"({apart:.0f} m l'un de l'autre), à {trip:.0f} m d'ici")
+    if trip > BASE_NEAR and not mover.walk_to(x, y, radius=BASE_NEAR):
+        print("  je n'y arrive pas : je m'installe ici")
 
 
 def describe(step: Step, plan: Plan) -> str:

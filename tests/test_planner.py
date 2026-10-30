@@ -7,11 +7,12 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "real_game"))
 
-from planner import choose_milestone, next_step, parse_schematics  # noqa: E402
+from planner import choose_milestone, next_step, parse_schematics, raw_needs  # noqa: E402
 
 # The game's own milestones and recipes (Tier 0 to 2), read with the mod.
 RECORDED = json.loads((HERE / "fixtures" / "frm_milestones_t0_t2.json").read_text(encoding="utf-8"))
 CONCRETE, ROD, PLATE, LIMESTONE = "Desc_Cement_C", "Desc_IronRod_C", "Desc_IronPlate_C", "Desc_Stone_C"
+IRON_ORE = "Desc_OreIron_C"
 
 
 def after_tier0(remaining: dict | None = None):
@@ -46,18 +47,40 @@ class PlannerTest(unittest.TestCase):
     def test_waits_for_the_hub_ship(self):
         self.assertEqual(next_step(after_tier0(), {}, active=None, ship_docked=False).kind, "wait")
 
-    def test_goes_back_down_the_chain_to_the_ore(self):
+    def test_mines_all_the_ore_needed_then_crafts_it_all(self):
         # The demo's state: 58 concrete, 100 plates and 58 rods already given.
         plan = after_tier0({CONCRETE: 142, PLATE: 0, ROD: 42})
-        step = next_step(plan, {PLATE: 29}, active="Schematic_1-1_C")
-        self.assertEqual((step.kind, step.item, step.count), ("mine", LIMESTONE, 100))
-        step = next_step(plan, {LIMESTONE: 150}, active="Schematic_1-1_C")
-        self.assertEqual((step.kind, step.recipe.name, step.count), ("craft", "Béton", 50))
+        active = "Schematic_1-1_C"
+        step = next_step(plan, {PLATE: 29}, active=active)  # 142 concrete: 426 limestone, 300 a trip
+        self.assertEqual((step.kind, step.item, step.count), ("mine", LIMESTONE, 300))
+        step = next_step(plan, {LIMESTONE: 300}, active=active)
+        self.assertEqual((step.kind, step.item, step.count), ("mine", LIMESTONE, 126))
+        step = next_step(plan, {LIMESTONE: 426}, active=active)  # then the iron for 42 rods
+        self.assertEqual((step.kind, step.item, step.count), ("mine", IRON_ORE, 42))
+        step = next_step(plan, {LIMESTONE: 426, IRON_ORE: 42}, active=active)
+        self.assertEqual((step.kind, step.recipe.name, step.count), ("craft", "Béton", 142))
+
+    def test_field_research_needs_all_its_copper_at_once(self):
+        step = next_step(after_tier0(), {}, active=None)
+        plan = after_tier0()
+        needs = raw_needs(plan, step.milestone.remaining, {})
+        self.assertEqual(needs.get("Desc_OreCopper_C"), 150)  # 300 wire: 150 ingots, 150 copper ore
 
     def test_deposits_once_everything_is_carried(self):
         plan = after_tier0({CONCRETE: 142, PLATE: 0, ROD: 42})
         step = next_step(plan, {CONCRETE: 142, ROD: 50}, active="Schematic_1-1_C")
         self.assertEqual(step.kind, "deposit")
+
+    def test_sets_up_the_base_between_iron_and_copper_close_together(self):
+        from game_state import Node
+        from planner import choose_base
+
+        nodes = [Node("iron_ore", "normal", 100, 0, 0, False), Node("copper_ore", "normal", 400, 0, 0, False),
+                 Node("iron_ore", "normal", 300, 300, 0, False), Node("copper_ore", "normal", 330, 300, 0, False),
+                 Node("limestone", "normal", 315, 320, 0, False)]
+        x, y, apart, trip = choose_base(nodes, 0.0, 0.0)
+        self.assertEqual((x, y, apart), (315.0, 300.0, 30.0))
+        self.assertIsNone(choose_base(nodes[:2], 0.0, 0.0))  # 300 m apart: too far
 
     def test_never_picks_a_milestone_needing_parts_it_cannot_make(self):
         plan = after_tier0()
